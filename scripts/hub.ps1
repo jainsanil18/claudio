@@ -320,7 +320,7 @@ while (-not $sync.quit) {
     if (-not $sync.clis.ContainsKey($hwndKey)) { continue }
     $cli = $sync.clis[$hwndKey]
     Write-VoiceLog "wake '$phrase' -> $($cli.name) conf=$([math]::Round($r.Confidence,2))" 'hub'
-    [console]::Beep(988, 150)
+    [console]::Beep(440, 90)        # low tick = "heard you" (Get-HubCommand does the high "speak now")
     $cmd = Get-HubCommand
     if ($cmd) {
         Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd -TabId $cli.tab -TabName $cli.tabName
