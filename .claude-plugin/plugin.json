@@ -1,0 +1,9 @@
+{
+  "name": "windows-voice",
+  "version": "0.1.0",
+  "description": "Native Windows voice for Claude Code. Speaks responses aloud with Windows SAPI TTS and adds optional hands-free wake-word voice input. No external services, no Python, no browser.",
+  "author": { "name": "sanil" },
+  "keywords": ["voice", "tts", "speech-recognition", "windows", "accessibility", "hands-free"],
+  "hooks": "./hooks/hooks.json",
+  "commands": "./commands"
+}

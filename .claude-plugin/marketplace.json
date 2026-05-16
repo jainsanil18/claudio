@@ -1,0 +1,14 @@
+{
+  "name": "local-voice",
+  "owner": { "name": "sanil" },
+  "metadata": {
+    "description": "Local marketplace hosting the windows-voice plugin."
+  },
+  "plugins": [
+    {
+      "name": "windows-voice",
+      "source": "./",
+      "description": "Native Windows voice (SAPI TTS output + hands-free wake-word input) for Claude Code."
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+# Runtime state lives in %USERPROFILE%\.claude\windows-voice (outside the repo).
+# Nothing here is generated, but keep OS/editor cruft out.
+Thumbs.db
+desktop.ini
+.DS_Store
+*.log
+*.swp
+.vscode/
+.idea/
