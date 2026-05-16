@@ -73,8 +73,37 @@ using System.Runtime.InteropServices;
 public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool BringWindowToTop(IntPtr hWnd);
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
     [DllImport("user32.dll")] public static extern bool IsWindow(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr hWnd);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr hWnd, IntPtr pid);
+    [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
+    [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+
+    // Force a window to the foreground, defeating Windows' foreground-lock by
+    // attaching to the current foreground thread's input queue. Works reliably
+    // for any top-level WINDOW (not individual terminal TABS - those share one
+    // handle and cannot be targeted by Win32).
+    public static bool ForceForeground(IntPtr hWnd) {
+        if (hWnd == IntPtr.Zero || !IsWindow(hWnd)) return false;
+        if (IsIconic(hWnd)) ShowWindow(hWnd, 9); else ShowWindow(hWnd, 5); // RESTORE / SHOW
+        IntPtr fg = GetForegroundWindow();
+        uint tCur = GetCurrentThreadId();
+        uint tFg  = (fg == IntPtr.Zero) ? 0 : GetWindowThreadProcessId(fg, IntPtr.Zero);
+        uint tTgt = GetWindowThreadProcessId(hWnd, IntPtr.Zero);
+        if (tFg != 0)  AttachThreadInput(tFg, tCur, true);
+        if (tTgt != 0) AttachThreadInput(tTgt, tCur, true);
+        // nudge an ALT keypress - releases the foreground lock on modern Windows
+        keybd_event(0x12, 0, 0, IntPtr.Zero);
+        keybd_event(0x12, 0, 2, IntPtr.Zero);
+        bool ok = SetForegroundWindow(hWnd);
+        BringWindowToTop(hWnd);
+        if (tTgt != 0) AttachThreadInput(tTgt, tCur, false);
+        if (tFg != 0)  AttachThreadInput(tFg, tCur, false);
+        return ok || GetForegroundWindow() == hWnd;
+    }
 }
 "@
 }
@@ -85,6 +114,12 @@ function Set-ActiveWindow {
     param([IntPtr]$Handle)
     if ($Handle -eq [IntPtr]::Zero) { return $false }
     if (-not [WinVoiceNative]::IsWindow($Handle)) { return $false }
-    [WinVoiceNative]::ShowWindow($Handle, 9) | Out-Null   # SW_RESTORE
-    return [WinVoiceNative]::SetForegroundWindow($Handle)
+    $ok = [WinVoiceNative]::ForceForeground($Handle)
+    Start-Sleep -Milliseconds 120
+    # confirm it actually came forward; one retry
+    if ([WinVoiceNative]::GetForegroundWindow() -ne $Handle) {
+        [WinVoiceNative]::ForceForeground($Handle) | Out-Null
+        Start-Sleep -Milliseconds 120
+    }
+    return ([WinVoiceNative]::GetForegroundWindow() -eq $Handle) -or $ok
 }
