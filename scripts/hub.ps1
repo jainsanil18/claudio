@@ -104,8 +104,9 @@ $httpScript = {
                         $sync.clis[$k].name = $n
                         $sync.clis[$k].wake = @("hey $n", "okay $n")
                         $sync.clis[$k].cwd  = $body.cwd
-                        $sync.clis[$k].tab     = $body.tab      # tab RuntimeId (stable) or null
-                        $sync.clis[$k].tabName = $body.tabName  # tab title (for logs only)
+                        $sync.clis[$k].tab     = $body.tab      # tab RuntimeId or null
+                        $sync.clis[$k].tabName = $body.tabName  # tab title (logs only)
+                        $sync.clis[$k].pane    = $body.pane     # focused split-pane RuntimeId or null
                         $sync.clis[$k].seen = (Get-Date)
                         $sync.grammarDirty  = $true
                         $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $k; $out.cwd = $body.cwd
@@ -190,33 +191,42 @@ function Get-HubCommand {
 }
 
 function Focus-Cli {
-    # Bring the named CLI forward BEFORE the user speaks. Tab-select (UIA) is
-    # the reliable path; window foreground is best-effort. Returns a status
-    # string for logging. Also clicks the pane so it has keyboard focus.
-    param([IntPtr]$Handle, [string]$TabId, [string]$TabName)
+    # Bring the named CLI forward BEFORE the user speaks.
+    #  - window to foreground (best-effort)
+    #  - if it's a tab: select it (UIA)
+    #  - if it's a split PANE: click that pane's rectangle (the reliable bit)
+    #  - else: click client centre
+    param([IntPtr]$Handle, [string]$TabId, [string]$TabName, [string]$PaneId)
+    $foc = Set-ActiveWindow -Handle $Handle
+    Start-Sleep -Milliseconds 120
     $tabSel = $false
     if ($TabId) {
         $tabSel = Select-TabById -Hwnd $Handle -Id $TabId
         if (-not $tabSel) { Write-VoiceLog "tab '$TabName' (id $TabId) not found" 'hub' }
-        Start-Sleep -Milliseconds 120
+        Start-Sleep -Milliseconds 150
     }
-    $foc = Set-ActiveWindow -Handle $Handle
-    Start-Sleep -Milliseconds 120
-    $clk = [WinVoiceNative]::ClickClientCenter($Handle)
-    Start-Sleep -Milliseconds 120
+    $paneSel = $false
+    if ($PaneId) {
+        $paneSel = Focus-PaneById -Hwnd $Handle -Id $PaneId
+        if (-not $paneSel) { Write-VoiceLog "pane $PaneId not found - click centre" 'hub'; [void][WinVoiceNative]::ClickClientCenter($Handle) }
+    } else {
+        [void][WinVoiceNative]::ClickClientCenter($Handle)
+    }
+    Start-Sleep -Milliseconds 150
     $fg  = [WinVoiceNative]::GetForegroundWindow()
     $match = ([int64]$fg -eq [int64]$Handle)
-    Write-VoiceLog "focus -> hwnd=$Handle tabSel=$tabSel winFocus=$foc click=$clk fgMatch=$match" 'hub'
-    if (-not $tabSel -and -not $match) { return 'FAIL' }   # neither tab nor window focus worked
+    Write-VoiceLog "focus -> hwnd=$Handle winFocus=$foc tabSel=$tabSel paneSel=$paneSel fgMatch=$match" 'hub'
+    if (-not $match -and -not $paneSel -and -not $tabSel) { return 'FAIL' }
     return 'OK'
 }
 
 function Inject-Text {
     # Focus already done by Focus-Cli; re-assert the tab cheaply (in case the
     # active tab drifted while you spoke) then paste via clipboard + Ctrl+V.
-    param([IntPtr]$Handle, [string]$Text, [string]$TabId)
-    if ($TabId) { [void](Select-TabById -Hwnd $Handle -Id $TabId); Start-Sleep -Milliseconds 100 }
-    [void][WinVoiceNative]::ClickClientCenter($Handle)
+    param([IntPtr]$Handle, [string]$Text, [string]$TabId, [string]$PaneId)
+    if ($TabId)  { [void](Select-TabById -Hwnd $Handle -Id $TabId); Start-Sleep -Milliseconds 100 }
+    if ($PaneId) { if (-not (Focus-PaneById -Hwnd $Handle -Id $PaneId)) { [void][WinVoiceNative]::ClickClientCenter($Handle) } }
+    else         { [void][WinVoiceNative]::ClickClientCenter($Handle) }
     Start-Sleep -Milliseconds 120
     $clean = ($Text -replace "[\r\n]+", ' ')
     $pasted = $false
@@ -346,7 +356,7 @@ while (-not $sync.quit) {
     [console]::Beep(440, 90)        # low tick = "heard you, focusing $($cli.name)"
     $hw = [IntPtr][int64]$hwndKey
     # 1) FOCUS the CLI first so you see it land before talking
-    $fres = Focus-Cli -Handle $hw -TabId $cli.tab -TabName $cli.tabName
+    $fres = Focus-Cli -Handle $hw -TabId $cli.tab -TabName $cli.tabName -PaneId $cli.pane
     if ($fres -eq 'FAIL') {
         Write-VoiceLog "$($cli.name): could not focus (tab gone + window not foregroundable) - re-run /claudio:name" 'hub'
         [console]::Beep(220, 300)
@@ -356,7 +366,7 @@ while (-not $sync.quit) {
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
     if ($cmd) {
-        Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab
+        Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab -PaneId $cli.pane
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
     } else { Write-VoiceLog "$($cli.name): empty command" 'hub'; [console]::Beep(330, 200) }
 }

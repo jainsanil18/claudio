@@ -90,6 +90,17 @@ public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
     [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
 
+    // Click an absolute screen point (used to focus a specific WT split pane
+    // by its UIA bounding rectangle). Saves/restores the cursor.
+    public static bool ClickPoint(int x, int y) {
+        WVPOINT old; GetCursorPos(out old);
+        SetCursorPos(x, y);
+        mouse_event(0x02, 0, 0, 0, IntPtr.Zero);
+        mouse_event(0x04, 0, 0, 0, IntPtr.Zero);
+        SetCursorPos(old.X, old.Y);
+        return true;
+    }
+
     // Click the centre of the window's client area to give that terminal pane
     // real keyboard focus (UIA tab-select alone leaves focus on the tab strip,
     // so SendKeys goes nowhere). Saves/restores the cursor position.

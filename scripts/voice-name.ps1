@@ -17,6 +17,9 @@ $cls   = Get-WindowClass -Handle $h
 $ti    = Get-ActiveTab -Hwnd $h          # selected tab's stable RuntimeId + name
 $tabId = $null; $tabName = $null
 if ($ti) { $tabId = $ti.id; $tabName = $ti.name }
+$pane  = Get-ActivePane -Hwnd $h         # the split PANE you focused (Alt+Shift+- splits)
+$paneId = $null
+if ($pane) { $paneId = $pane.id }
 
 # Validate we actually captured a terminal, not the editor / a browser / etc.
 $termClasses = @('CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass', 'PseudoConsoleWindow')
@@ -27,22 +30,22 @@ if (-not $isTerm) {
     Write-Output "click the actual Claude TERMINAL tab/window (Windows Terminal / console)."
     return
 }
-if ($cls -eq 'CASCADIA_HOSTING_WINDOW_CLASS' -and -not $tabId) {
-    Write-Output "That's a Windows Terminal window but no tab was detected (hwnd $hwnd)."
-    Write-Output "Click directly on the tab you want, then re-run /claudio:name $Name."
+if ($cls -eq 'CASCADIA_HOSTING_WINDOW_CLASS' -and -not $tabId -and -not $paneId) {
+    Write-Output "That's a Windows Terminal window but no tab/pane was detected (hwnd $hwnd)."
+    Write-Output "Click directly in the Claude pane you want, then re-run /claudio:name $Name."
     return
 }
 
-$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tabId; tabName = $tabName; cls = $cls }
+$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tabId; tabName = $tabName; pane = $paneId; cls = $cls }
 if (-not $resp) {
     Write-Output "Claudio Hub isn't running. Start it with /claudio:hub then run /claudio:name $Name again."
     return
 }
 if ($resp.ok) {
-    $where = if ($tabId) { "window $hwnd, tab '$tabName'" } else { "window $hwnd" }
-    Write-Output "Mapped '$($resp.name)' -> $where."
-    if ($tabId) { Write-Output "Tab routing ON (re-selects this exact tab by identity, title can change)." }
-    else        { Write-Output "No tab detected - using window focus (fine for a separate window)." }
+    Write-Output "Mapped '$($resp.name)' -> window $hwnd."
+    if ($paneId) { Write-Output "PANE routing ON - 'hey $Name' clicks this exact split pane." }
+    elseif ($tabId) { Write-Output "Tab routing ON - re-selects this tab by identity." }
+    else { Write-Output "Window focus only (separate window)." }
     Write-Output "Say:  $($resp.wake -join '   /   ')   then your command."
     Write-Output "(Re-run /claudio:name $Name if it grabbed the wrong tab/window.)"
 } else {

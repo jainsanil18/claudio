@@ -39,6 +39,44 @@ function Get-ActiveTab {
     return $null
 }
 
+function Get-ActivePane {
+    # The terminal pane that currently has keyboard focus (the split pane the
+    # user clicked). Returns @{ id=RuntimeId; name } or $null. RuntimeId is
+    # stable for the pane's life; we re-locate it and click its rect later.
+    param([IntPtr]$Hwnd)
+    if (-not $script:WV_UIA) { return $null }
+    try {
+        $fe = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if (-not $fe) { return $null }
+        return @{ id = ($fe.GetRuntimeId() -join '.'); name = [string]$fe.Current.Name }
+    } catch { return $null }
+}
+
+function Focus-PaneById {
+    # Find the pane element by RuntimeId in $Hwnd's window and click the centre
+    # of its CURRENT bounding rectangle (handles resize/move). $true on hit.
+    param([IntPtr]$Hwnd, [string]$Id)
+    if (-not $script:WV_UIA -or -not $Id -or $Hwnd -eq [IntPtr]::Zero) { return $false }
+    try {
+        $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
+        if (-not $root) { return $false }
+        $all = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+            [System.Windows.Automation.Condition]::TrueCondition)
+        foreach ($el in $all) {
+            try {
+                if (($el.GetRuntimeId() -join '.') -eq $Id) {
+                    $r = $el.Current.BoundingRectangle
+                    if ($r.Width -gt 1 -and $r.Height -gt 1) {
+                        [void][WinVoiceNative]::ClickPoint([int]($r.X + $r.Width / 2), [int]($r.Y + $r.Height / 2))
+                        return $true
+                    }
+                }
+            } catch { }
+        }
+    } catch { }
+    return $false
+}
+
 function Select-TabById {
     # Re-select the tab whose RuntimeId == $Id. Returns $true only on a match.
     param([IntPtr]$Hwnd, [string]$Id)
