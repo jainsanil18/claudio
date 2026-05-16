@@ -27,6 +27,7 @@ Add-Type -AssemblyName System.Speech
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 . (Join-Path $PSScriptRoot 'win-async.ps1')
+. (Join-Path $PSScriptRoot 'uia.ps1')
 
 # Speech privacy consent (WinRT dictation hard-requires it)
 $accepted = $false
@@ -91,6 +92,7 @@ $httpScript = {
                         $sync.clis[$k].name = $n
                         $sync.clis[$k].wake = @("hey $n", "okay $n")
                         $sync.clis[$k].cwd  = $body.cwd
+                        $sync.clis[$k].tab  = $body.tab    # active tab name (WT) or null
                         $sync.clis[$k].seen = (Get-Date)
                         $sync.grammarDirty  = $true
                         $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $k; $out.cwd = $body.cwd
@@ -175,7 +177,13 @@ function Get-HubCommand {
 }
 
 function Send-ToWindow {
-    param([IntPtr]$Handle, [string]$Text)
+    param([IntPtr]$Handle, [string]$Text, [string]$TabName)
+    # If this CLI lives in a Windows Terminal tab, select that tab first
+    # (UI Automation); harmless/no-op for separate windows.
+    if ($TabName) {
+        if (Select-TabByName -Hwnd $Handle -Name $TabName) { Start-Sleep -Milliseconds 150 }
+        else { Write-VoiceLog "tab '$TabName' not found - window focus only" 'hub' }
+    }
     if (-not (Set-ActiveWindow -Handle $Handle)) { Write-VoiceLog "win not focusable: $Handle" 'hub'; [console]::Beep(220, 250); return }
     Start-Sleep -Milliseconds 200
     $esc = New-Object System.Text.StringBuilder
@@ -302,7 +310,7 @@ while (-not $sync.quit) {
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
     if ($cmd) {
-        Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd
+        Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd -TabName $cli.tab
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
     } else { Write-VoiceLog "$($cli.name): empty command" 'hub'; [console]::Beep(330, 200) }
 }

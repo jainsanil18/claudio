@@ -3,24 +3,30 @@
 # window and focuses it when routing. No guessing from whatever was foreground.
 param([string]$Name)
 . (Join-Path $PSScriptRoot 'common.ps1')
+. (Join-Path $PSScriptRoot 'uia.ps1')
 
 $Name = ($Name -replace '[^A-Za-z0-9 ]', '').Trim()
 if (-not $Name) { Write-Output "Usage: /claudio:name <name>   (e.g. /claudio:name atlas)"; return }
 
 Write-Output "Naming this CLI '$Name'."
-Write-Output "Click / focus the Claude window you want to be '$Name' -- capturing in 5 seconds..."
+Write-Output "Click / focus the Claude TAB or window you want to be '$Name' -- capturing in 5 seconds..."
 Start-Sleep -Seconds 5
-$hwnd = [string][int64](Get-ForegroundWindowHandle)
+$h    = Get-ForegroundWindowHandle
+$hwnd = [string][int64]$h
+$tab  = Get-ActiveTabName -Hwnd $h     # which tab is active in that window (if tabbed)
 
-$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path }
+$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tab }
 if (-not $resp) {
     Write-Output "Claudio Hub isn't running. Start it with /claudio:hub then run /claudio:name $Name again."
     return
 }
 if ($resp.ok) {
-    Write-Output "Mapped '$($resp.name)' -> window $hwnd."
+    $where = if ($tab) { "window $hwnd, tab '$tab'" } else { "window $hwnd" }
+    Write-Output "Mapped '$($resp.name)' -> $where."
+    if ($tab) { Write-Output "Tab routing ON (UI Automation will re-select this tab)." }
+    else      { Write-Output "No tab detected - using window focus (fine for a separate window)." }
     Write-Output "Say:  $($resp.wake -join '   /   ')   then your command."
-    Write-Output "(Re-run /claudio:name $Name if it grabbed the wrong window.)"
+    Write-Output "(Re-run /claudio:name $Name if it grabbed the wrong tab/window.)"
 } else {
     Write-Output "Hub error: $($resp.error)"
 }
