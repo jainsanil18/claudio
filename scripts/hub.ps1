@@ -208,14 +208,22 @@ function Send-ToWindow {
     $fg = [WinVoiceNative]::GetForegroundWindow()
     Write-VoiceLog "send -> hwnd=$Handle tabSel=$tabSel focus=$foc click=$clk fg=$fg fgMatch=$([int64]$fg -eq [int64]$Handle)" 'hub'
     if ([int64]$fg -ne [int64]$Handle -and -not $foc) { Write-VoiceLog "WARN target not foreground" 'hub'; [console]::Beep(220, 250) }
-    $esc = New-Object System.Text.StringBuilder
-    foreach ($ch in ($Text -replace "[\r\n]+", ' ').ToCharArray()) {
-        if ('+^%~(){}[]'.IndexOf($ch) -ge 0) { [void]$esc.Append('{').Append($ch).Append('}') } else { [void]$esc.Append($ch) }
-    }
     [console]::Beep(740, 110)
-    [System.Windows.Forms.SendKeys]::SendWait($esc.ToString())
-    Start-Sleep -Milliseconds 120
+    # Clipboard + paste: far more reliable into Windows Terminal than per-char
+    # SendKeys (which the diagnostic showed delivers nothing despite correct
+    # focus). Ctrl+V is WT's default paste; then Enter to submit.
+    $clean = ($Text -replace "[\r\n]+", ' ')
+    $pasted = $false
+    for ($i = 0; $i -lt 3 -and -not $pasted; $i++) {
+        try { [System.Windows.Forms.Clipboard]::SetText($clean); $pasted = $true }
+        catch { Start-Sleep -Milliseconds 120 }
+    }
+    if (-not $pasted) { Write-VoiceLog 'clipboard set failed' 'hub'; [console]::Beep(220, 250); return }
+    Start-Sleep -Milliseconds 80
+    [System.Windows.Forms.SendKeys]::SendWait('^v')
+    Start-Sleep -Milliseconds 250
     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
+    Write-VoiceLog "pasted $($clean.Length) chars" 'hub'
     [console]::Beep(660, 120)
 }
 
