@@ -5,6 +5,18 @@
 $state   = Get-VoiceStateDir
 $pidFile = Join-Path $state 'listener.pid'
 
+# One mic: refuse to start if the multi-CLI hub is running (it owns the mic).
+$hubJson = Join-Path $state 'hub.json'
+if (Test-Path $hubJson) {
+    try {
+        $hp = [int]((Get-Content $hubJson -Raw | ConvertFrom-Json).pid)
+        if (Get-Process -Id $hp -ErrorAction SilentlyContinue) {
+            Write-Output "The Claudio Hub is running (it owns the mic). Use /claudio:name <name> per CLI, or stop the hub with /claudio:hub stop before /claudio:listen."
+            exit 0
+        }
+    } catch { }
+}
+
 if (Test-Path $pidFile) {
     $existing = (Get-Content $pidFile -Raw).Trim()
     if ($existing -and (Get-Process -Id $existing -ErrorAction SilentlyContinue)) {

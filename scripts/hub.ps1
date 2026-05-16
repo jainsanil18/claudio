@@ -38,6 +38,18 @@ if (-not $accepted) {
     return
 }
 
+# One mic: the single-CLI listener and the hub cannot coexist. Stop any
+# running listener so it doesn't contend for the microphone.
+$lpf = Join-Path $state 'listener.pid'
+if (Test-Path $lpf) {
+    Set-Content -Path (Join-Path $state 'stop.flag') -Value '1'
+    try { Stop-Process -Id ([int]((Get-Content $lpf -Raw).Trim())) -Force -EA SilentlyContinue } catch { }
+    Remove-Item $lpf -Force -EA SilentlyContinue
+    Start-Sleep -Milliseconds 600
+    Remove-Item (Join-Path $state 'stop.flag') -Force -EA SilentlyContinue
+    Write-VoiceLog 'stopped single-CLI listener (hub owns the mic)' 'hub'
+}
+
 Set-Content -Path $hubJson -Value (@{ port = $port; pid = $PID } | ConvertTo-Json) -Encoding UTF8
 Write-VoiceLog "hub starting (pid $PID, port $port)" 'hub'
 
