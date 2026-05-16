@@ -21,21 +21,25 @@ wedges.
 
 ## Install
 
-Windows + Claude Code required.
-
-```bash
-git clone https://github.com/jainsanil18/claudio.git
-```
-
-In Claude Code (use the full path where you cloned it):
+Windows + Claude Code required. In Claude Code, run:
 
 ```
-/plugin marketplace add <path>\claudio
+/plugin marketplace add jainsanil18/claudio
 /plugin install claudio@claudio
 ```
 
-Restart Claude Code so the `Stop` hook loads. (Dev alternative:
-`claude --plugin-dir <path>\claudio`.)
+That's it -- pulls straight from GitHub, no clone. Restart Claude Code so the
+`Stop` hook loads.
+
+<details><summary>Local dev install</summary>
+
+```
+git clone https://github.com/jainsanil18/claudio.git
+/plugin marketplace add <path>\claudio
+/plugin install claudio@claudio
+```
+Or: `claude --plugin-dir <path>\claudio`
+</details>
 
 First run:
 1. `/claudio:check` -- verify the WinRT speech engine.
