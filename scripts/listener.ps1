@@ -270,7 +270,15 @@ while ($true) {
     }
     if ($wasSpeaking) {
         Start-Sleep -Milliseconds ([int]$cfg.ttsTailMs)   # let room echo settle
-        Write-VoiceLog 'TTS ended - listening resumed' 'listener'
+        # The WinRT recognizer reliably goes stale after a spoken reply. Rebuild
+        # it NOW (in the post-speech dead time) so your next "hey claude" is
+        # fresh instead of wedging ~17s on the next command.
+        if ($winrtReady) {
+            try { $null = Initialize-WinRec -Warm; Write-VoiceLog 'TTS ended - recognizer refreshed, listening' 'listener' }
+            catch { Write-VoiceLog "post-TTS refresh failed: $($_.Exception.Message)" 'listener' }
+        } else {
+            Write-VoiceLog 'TTS ended - listening resumed' 'listener'
+        }
         $wasSpeaking = $false
     }
 
