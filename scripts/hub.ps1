@@ -163,7 +163,7 @@ function Initialize-HubRec {
 
 function Get-HubCommand {
     $rcg = $script:hrec
-    [console]::Beep(988, 150)
+    # (no beep here - the main loop beeps AFTER focusing the CLI)
     $buffer = New-Object System.Text.StringBuilder
     $start = Get-Date; $first = $true; $cold = 0; $rebuilt = $false
     while ($true) {
@@ -189,29 +189,35 @@ function Get-HubCommand {
     return $buffer.ToString().Trim()
 }
 
-function Send-ToWindow {
-    param([IntPtr]$Handle, [string]$Text, [string]$TabId, [string]$TabName)
-    # If this CLI lives in a Windows Terminal tab, re-select it by stable
-    # RuntimeId first (UI Automation); no-op for separate windows.
+function Focus-Cli {
+    # Bring the named CLI forward BEFORE the user speaks. Tab-select (UIA) is
+    # the reliable path; window foreground is best-effort. Returns a status
+    # string for logging. Also clicks the pane so it has keyboard focus.
+    param([IntPtr]$Handle, [string]$TabId, [string]$TabName)
     $tabSel = $false
     if ($TabId) {
         $tabSel = Select-TabById -Hwnd $Handle -Id $TabId
-        if ($tabSel) { Start-Sleep -Milliseconds 150 }
-        else { Write-VoiceLog "tab '$TabName' (id $TabId) gone - window focus only" 'hub' }
+        if (-not $tabSel) { Write-VoiceLog "tab '$TabName' (id $TabId) not found" 'hub' }
+        Start-Sleep -Milliseconds 120
     }
     $foc = Set-ActiveWindow -Handle $Handle
-    Start-Sleep -Milliseconds 150
-    # Click the terminal pane so it actually has keyboard focus (tab-select
-    # leaves focus on the tab strip; SendKeys needs the pane focused).
+    Start-Sleep -Milliseconds 120
     $clk = [WinVoiceNative]::ClickClientCenter($Handle)
-    Start-Sleep -Milliseconds 150
-    $fg = [WinVoiceNative]::GetForegroundWindow()
-    Write-VoiceLog "send -> hwnd=$Handle tabSel=$tabSel focus=$foc click=$clk fg=$fg fgMatch=$([int64]$fg -eq [int64]$Handle)" 'hub'
-    if ([int64]$fg -ne [int64]$Handle -and -not $foc) { Write-VoiceLog "WARN target not foreground" 'hub'; [console]::Beep(220, 250) }
-    [console]::Beep(740, 110)
-    # Clipboard + paste: far more reliable into Windows Terminal than per-char
-    # SendKeys (which the diagnostic showed delivers nothing despite correct
-    # focus). Ctrl+V is WT's default paste; then Enter to submit.
+    Start-Sleep -Milliseconds 120
+    $fg  = [WinVoiceNative]::GetForegroundWindow()
+    $match = ([int64]$fg -eq [int64]$Handle)
+    Write-VoiceLog "focus -> hwnd=$Handle tabSel=$tabSel winFocus=$foc click=$clk fgMatch=$match" 'hub'
+    if (-not $tabSel -and -not $match) { return 'FAIL' }   # neither tab nor window focus worked
+    return 'OK'
+}
+
+function Inject-Text {
+    # Focus already done by Focus-Cli; re-assert the tab cheaply (in case the
+    # active tab drifted while you spoke) then paste via clipboard + Ctrl+V.
+    param([IntPtr]$Handle, [string]$Text, [string]$TabId)
+    if ($TabId) { [void](Select-TabById -Hwnd $Handle -Id $TabId); Start-Sleep -Milliseconds 100 }
+    [void][WinVoiceNative]::ClickClientCenter($Handle)
+    Start-Sleep -Milliseconds 120
     $clean = ($Text -replace "[\r\n]+", ' ')
     $pasted = $false
     for ($i = 0; $i -lt 3 -and -not $pasted; $i++) {
@@ -223,7 +229,7 @@ function Send-ToWindow {
     [System.Windows.Forms.SendKeys]::SendWait('^v')
     Start-Sleep -Milliseconds 250
     [System.Windows.Forms.SendKeys]::SendWait('{ENTER}')
-    Write-VoiceLog "pasted $($clean.Length) chars" 'hub'
+    Write-VoiceLog "pasted $($clean.Length) chars -> hwnd=$Handle" 'hub'
     [console]::Beep(660, 120)
 }
 
@@ -337,10 +343,20 @@ while (-not $sync.quit) {
     if (-not $sync.clis.ContainsKey($hwndKey)) { continue }
     $cli = $sync.clis[$hwndKey]
     Write-VoiceLog "wake '$phrase' -> $($cli.name) conf=$([math]::Round($r.Confidence,2))" 'hub'
-    [console]::Beep(440, 90)        # low tick = "heard you" (Get-HubCommand does the high "speak now")
+    [console]::Beep(440, 90)        # low tick = "heard you, focusing $($cli.name)"
+    $hw = [IntPtr][int64]$hwndKey
+    # 1) FOCUS the CLI first so you see it land before talking
+    $fres = Focus-Cli -Handle $hw -TabId $cli.tab -TabName $cli.tabName
+    if ($fres -eq 'FAIL') {
+        Write-VoiceLog "$($cli.name): could not focus (tab gone + window not foregroundable) - re-run /claudio:name" 'hub'
+        [console]::Beep(220, 300)
+        continue
+    }
+    # 2) NOW the speak-now beep, 3) capture, 4) paste into the focused CLI
+    [console]::Beep(988, 150)
     $cmd = Get-HubCommand
     if ($cmd) {
-        Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd -TabId $cli.tab -TabName $cli.tabName
+        Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
     } else { Write-VoiceLog "$($cli.name): empty command" 'hub'; [console]::Beep(330, 200) }
 }

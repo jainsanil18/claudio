@@ -88,6 +88,7 @@ public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern bool GetCursorPos(out WVPOINT p);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
+    [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
 
     // Click the centre of the window's client area to give that terminal pane
     // real keyboard focus (UIA tab-select alone leaves focus on the tab strip,
@@ -131,6 +132,14 @@ public static class WinVoiceNative {
 }
 
 function Get-ForegroundWindowHandle { [WinVoiceNative]::GetForegroundWindow() }
+
+function Get-WindowClass {
+    param([IntPtr]$Handle)
+    if ($Handle -eq [IntPtr]::Zero) { return '' }
+    $sb = New-Object System.Text.StringBuilder 256
+    [void][WinVoiceNative]::GetClassName($Handle, $sb, 256)
+    return $sb.ToString()
+}
 
 function Set-ActiveWindow {
     param([IntPtr]$Handle)
