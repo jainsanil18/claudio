@@ -95,9 +95,9 @@ public static class WinVoiceNative {
         uint tTgt = GetWindowThreadProcessId(hWnd, IntPtr.Zero);
         if (tFg != 0)  AttachThreadInput(tFg, tCur, true);
         if (tTgt != 0) AttachThreadInput(tTgt, tCur, true);
-        // nudge an ALT keypress - releases the foreground lock on modern Windows
-        keybd_event(0x12, 0, 0, IntPtr.Zero);
-        keybd_event(0x12, 0, 2, IntPtr.Zero);
+        // NOTE: no ALT keybd_event nudge - it poisons the next SendKeys
+        // (Windows Terminal treats following chars as ALT+key shortcuts and
+        // nothing types). AttachThreadInput alone defeats the foreground lock.
         bool ok = SetForegroundWindow(hWnd);
         BringWindowToTop(hWnd);
         if (tTgt != 0) AttachThreadInput(tTgt, tCur, false);
