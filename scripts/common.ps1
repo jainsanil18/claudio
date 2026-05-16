@@ -15,7 +15,7 @@ function Get-VoiceConfig {
         voice              = ''        # '' = system default voice
         rate               = 1         # -10..10 (slightly brisk; higher = shorter deaf window)
         volume             = 100       # 0..100
-        maxChars           = 200       # cap spoken length (~12-15s; keeps the half-duplex deaf window short)
+        maxChars           = 100000    # effectively uncapped - speak the full answer (use /windows-voice:hush to cut a long one)
         speakCodeBlocks    = $false
         wakeWords          = @('hey claude', 'okay claude')   # bare 'claude' self-triggers on TTS
         endWords           = @('over', 'send it', 'go ahead', 'that is all', 'send')

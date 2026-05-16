@@ -78,6 +78,24 @@ $endWords = @($cfg.endWords | ForEach-Object { $_.ToString().ToLower().Trim() })
 # ---------------------------------------------------------------------------
 # WinRT command engine
 # ---------------------------------------------------------------------------
+function Initialize-WinRec {
+    # (Re)build the persistent recognizer. Used at startup and to self-heal
+    # when RecognizeAsync wedges (it goes stale after long TTS / idle).
+    param([switch]$Warm)
+    try { if ($script:winrec) { $script:winrec.Dispose() } } catch { }
+    $script:winrec = New-Object Windows.Media.SpeechRecognition.SpeechRecognizer
+    try { $script:winrec.Timeouts.EndSilenceTimeout = [TimeSpan]::FromSeconds([double]$cfg.winrtEndSilenceSec) } catch { }
+    $c = Wait-WinRtOp $script:winrec.CompileConstraintsAsync() $script:WV_SR_Compile 20000
+    if ($c.Status.ToString() -ne 'Success') { throw "CompileConstraints status = $($c.Status)." }
+    if ($Warm) {
+        try {
+            $script:winrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.4)
+            $null = Wait-WinRtOp $script:winrec.RecognizeAsync() $script:WV_SR_Result 15000
+        } catch { Write-VoiceLog "warm note: $($_.Exception.Message)" 'listener' }
+    }
+    return $script:winrec.CurrentLanguage.LanguageTag
+}
+
 $winrtReady = $false
 if ($cfg.sttEngine -eq 'winrt') {
     try {
@@ -89,21 +107,11 @@ if ($cfg.sttEngine -eq 'winrt') {
             throw "Speech privacy policy not accepted. Enable Settings > Privacy & security > Speech > 'Online speech recognition', or set sttEngine='sapi' in config.json."
         }
         . (Join-Path $PSScriptRoot 'win-async.ps1')
-        # ONE persistent recognizer, compiled + warmed HERE at startup. The
-        # cold ~11s first-capture happens once now (nobody is waiting on a
-        # command), so every real command afterward is instant.
-        $script:winrec = New-Object Windows.Media.SpeechRecognition.SpeechRecognizer
-        try { $script:winrec.Timeouts.EndSilenceTimeout = [TimeSpan]::FromSeconds([double]$cfg.winrtEndSilenceSec) } catch { }
-        $comp = Wait-WinRtOp $script:winrec.CompileConstraintsAsync() $script:WV_SR_Compile 20000
-        if ($comp.Status.ToString() -ne 'Success') {
-            throw "CompileConstraints status = $($comp.Status). Install the on-device speech language pack: Settings > Time & language > Speech > Speech recognition."
-        }
-        $lang = $script:winrec.CurrentLanguage.LanguageTag
+        # ONE persistent recognizer, compiled + warmed HERE at startup so the
+        # cold ~11s first-capture happens once (nobody waiting). Self-heals
+        # later via Initialize-WinRec if RecognizeAsync wedges.
         Write-VoiceLog "warming WinRT audio pipeline (one-time cold start)..." 'listener'
-        try {
-            $script:winrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.4)
-            $null = Wait-WinRtOp $script:winrec.RecognizeAsync() $script:WV_SR_Result 20000   # absorb cold init
-        } catch { Write-VoiceLog "warm-up note: $($_.Exception.Message)" 'listener' }
+        $lang = Initialize-WinRec -Warm
         $winrtReady = $true
         Write-VoiceLog "WinRT warm & ready (lang $lang) - persistent recognizer" 'listener'
     }
@@ -136,6 +144,7 @@ function Get-Command-WinRT {
         $start   = Get-Date
         $first   = $true
         $coldTries = 0
+        $rebuilt   = $false
         while ($true) {
             if (Test-Path $stopFlag) { break }
             if (((Get-Date) - $start).TotalSeconds -ge [double]$cfg.maxCommandSec) {
@@ -143,10 +152,22 @@ function Get-Command-WinRT {
             }
             $silSec = if ($first) { [double]$cfg.winrtInitialSilenceSec } else { [double]$cfg.winrtContinueSilenceSec }
             try { $rcg.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds($silSec) } catch { }
+            # Tight bound: speech can't take longer than this. If RecognizeAsync
+            # blows past it the recognizer is wedged - rebuild & retry once
+            # instead of hanging 45s and looking dead.
+            $callMs = [int](($silSec + [double]$cfg.winrtEndSilenceSec + 10) * 1000)
             try {
-                $res = Wait-WinRtOp $rcg.RecognizeAsync() $script:WV_SR_Result (([int]$cfg.maxCommandSec + 15) * 1000)
+                $res = Wait-WinRtOp $rcg.RecognizeAsync() $script:WV_SR_Result $callMs
             }
-            catch { Write-VoiceLog "RecognizeAsync error: $($_.Exception.Message)" 'listener'; break }
+            catch {
+                Write-VoiceLog "RecognizeAsync wedged ($($_.Exception.Message))" 'listener'
+                if (-not $rebuilt) {
+                    Write-VoiceLog 'rebuilding recognizer (self-heal)...' 'listener'
+                    try { $null = Initialize-WinRec; $rcg = $script:winrec; $rebuilt = $true; continue }
+                    catch { Write-VoiceLog "rebuild failed: $($_.Exception.Message)" 'listener'; break }
+                }
+                break
+            }
 
             $status = $res.Status.ToString()
             $conf   = [int]$res.Confidence            # High0 Medium1 Low2 Rejected3

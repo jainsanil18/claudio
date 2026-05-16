@@ -1,14 +1,14 @@
 {
-  "name": "local-voice",
+  "name": "claudio",
   "owner": { "name": "sanil" },
   "metadata": {
-    "description": "Local marketplace hosting the windows-voice plugin."
+    "description": "Local marketplace hosting the Claudio plugin."
   },
   "plugins": [
     {
-      "name": "windows-voice",
+      "name": "claudio",
       "source": "./",
-      "description": "Native Windows voice (SAPI TTS output + hands-free wake-word input) for Claude Code."
+      "description": "Claudio - hands-free voice control for Claude Code on Windows. Wake word, WinRT STT, SAPI TTS."
     }
   ]
 }
