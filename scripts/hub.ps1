@@ -193,12 +193,21 @@ function Send-ToWindow {
     param([IntPtr]$Handle, [string]$Text, [string]$TabId, [string]$TabName)
     # If this CLI lives in a Windows Terminal tab, re-select it by stable
     # RuntimeId first (UI Automation); no-op for separate windows.
+    $tabSel = $false
     if ($TabId) {
-        if (Select-TabById -Hwnd $Handle -Id $TabId) { Start-Sleep -Milliseconds 150 }
+        $tabSel = Select-TabById -Hwnd $Handle -Id $TabId
+        if ($tabSel) { Start-Sleep -Milliseconds 150 }
         else { Write-VoiceLog "tab '$TabName' (id $TabId) gone - window focus only" 'hub' }
     }
-    if (-not (Set-ActiveWindow -Handle $Handle)) { Write-VoiceLog "win not focusable: $Handle" 'hub'; [console]::Beep(220, 250); return }
-    Start-Sleep -Milliseconds 200
+    $foc = Set-ActiveWindow -Handle $Handle
+    Start-Sleep -Milliseconds 150
+    # Click the terminal pane so it actually has keyboard focus (tab-select
+    # leaves focus on the tab strip; SendKeys needs the pane focused).
+    $clk = [WinVoiceNative]::ClickClientCenter($Handle)
+    Start-Sleep -Milliseconds 150
+    $fg = [WinVoiceNative]::GetForegroundWindow()
+    Write-VoiceLog "send -> hwnd=$Handle tabSel=$tabSel focus=$foc click=$clk fg=$fg fgMatch=$([int64]$fg -eq [int64]$Handle)" 'hub'
+    if ([int64]$fg -ne [int64]$Handle -and -not $foc) { Write-VoiceLog "WARN target not foreground" 'hub'; [console]::Beep(220, 250) }
     $esc = New-Object System.Text.StringBuilder
     foreach ($ch in ($Text -replace "[\r\n]+", ' ').ToCharArray()) {
         if ('+^%~(){}[]'.IndexOf($ch) -ge 0) { [void]$esc.Append('{').Append($ch).Append('}') } else { [void]$esc.Append($ch) }

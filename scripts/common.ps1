@@ -70,6 +70,8 @@ if (-not ('WinVoiceNative' -as [type])) {
     Add-Type @"
 using System;
 using System.Runtime.InteropServices;
+public struct WVPOINT { public int X; public int Y; }
+public struct WVRECT  { public int Left; public int Top; public int Right; public int Bottom; }
 public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -81,6 +83,26 @@ public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern bool AttachThreadInput(uint a, uint b, bool attach);
     [DllImport("kernel32.dll")] public static extern uint GetCurrentThreadId();
     [DllImport("user32.dll")] public static extern void keybd_event(byte vk, byte scan, uint flags, IntPtr extra);
+    [DllImport("user32.dll")] public static extern bool GetClientRect(IntPtr h, out WVRECT r);
+    [DllImport("user32.dll")] public static extern bool ClientToScreen(IntPtr h, ref WVPOINT p);
+    [DllImport("user32.dll")] public static extern bool GetCursorPos(out WVPOINT p);
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
+
+    // Click the centre of the window's client area to give that terminal pane
+    // real keyboard focus (UIA tab-select alone leaves focus on the tab strip,
+    // so SendKeys goes nowhere). Saves/restores the cursor position.
+    public static bool ClickClientCenter(IntPtr h) {
+        WVRECT rc; if (!GetClientRect(h, out rc)) return false;
+        WVPOINT c; c.X = (rc.Right - rc.Left) / 2; c.Y = (rc.Bottom - rc.Top) / 2;
+        if (!ClientToScreen(h, ref c)) return false;
+        WVPOINT old; GetCursorPos(out old);
+        SetCursorPos(c.X, c.Y);
+        mouse_event(0x02, 0, 0, 0, IntPtr.Zero); // LEFTDOWN
+        mouse_event(0x04, 0, 0, 0, IntPtr.Zero); // LEFTUP
+        SetCursorPos(old.X, old.Y);
+        return true;
+    }
 
     // Force a window to the foreground, defeating Windows' foreground-lock by
     // attaching to the current foreground thread's input queue. Works reliably
