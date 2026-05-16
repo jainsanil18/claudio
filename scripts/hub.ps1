@@ -181,11 +181,21 @@ function Get-HubCommand {
         $st = $res.Status.ToString(); $cf = [int]$res.Confidence
         $tx = ''; if ($res.Text) { $tx = $res.Text.Trim() }
         if ($st -eq 'Success' -and $tx -and $cf -le 2) {
+            Write-VoiceLog "heard: '$tx' conf=$($res.Confidence)" 'hub'
             [void]$buffer.Append(' ').Append($tx); $first = $false
             continue
         }
+        Write-VoiceLog "no result (status=$st conf=$($res.Confidence)) cold=$cold" 'hub'
         if ($buffer.Length -gt 0) { break }
-        $cold++; if ($cold -ge 3) { break }
+        $cold++
+        # Stale recognizer returns Unknown/Rejected WITHOUT throwing, so the
+        # exception self-heal never fires. Rebuild on silent cold-out, retry.
+        if ($cold -eq 2 -and -not $rebuilt) {
+            Write-VoiceLog 'recognizer cold (silent) - rebuilding' 'hub'
+            try { Initialize-HubRec; $rcg = $script:hrec; $rebuilt = $true } catch { }
+            continue
+        }
+        if ($cold -ge 4) { break }
     }
     return $buffer.ToString().Trim()
 }
@@ -362,7 +372,11 @@ while (-not $sync.quit) {
         [console]::Beep(220, 300)
         continue
     }
-    # 2) NOW the speak-now beep, 3) capture, 4) paste into the focused CLI
+    # 2) Rebuild the recognizer FRESH now (it goes stale during the idle gaps
+    #    between commands and silently returns garbage). Cost is paid here,
+    #    while you watch the pane focus, not when you speak.
+    try { Initialize-HubRec -Warm } catch { Write-VoiceLog "pre-capture rebuild failed: $($_.Exception.Message)" 'hub' }
+    # 3) NOW the speak-now beep, 4) capture, 5) paste into the focused CLI
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
     if ($cmd) {
