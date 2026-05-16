@@ -13,18 +13,20 @@ Write-Output "Click / focus the Claude TAB or window you want to be '$Name' -- c
 Start-Sleep -Seconds 5
 $h    = Get-ForegroundWindowHandle
 $hwnd = [string][int64]$h
-$tab  = Get-ActiveTabName -Hwnd $h     # which tab is active in that window (if tabbed)
+$ti   = Get-ActiveTab -Hwnd $h          # selected tab's stable RuntimeId + name
+$tabId = $null; $tabName = $null
+if ($ti) { $tabId = $ti.id; $tabName = $ti.name }
 
-$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tab }
+$resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tabId; tabName = $tabName }
 if (-not $resp) {
     Write-Output "Claudio Hub isn't running. Start it with /claudio:hub then run /claudio:name $Name again."
     return
 }
 if ($resp.ok) {
-    $where = if ($tab) { "window $hwnd, tab '$tab'" } else { "window $hwnd" }
+    $where = if ($tabId) { "window $hwnd, tab '$tabName'" } else { "window $hwnd" }
     Write-Output "Mapped '$($resp.name)' -> $where."
-    if ($tab) { Write-Output "Tab routing ON (UI Automation will re-select this tab)." }
-    else      { Write-Output "No tab detected - using window focus (fine for a separate window)." }
+    if ($tabId) { Write-Output "Tab routing ON (re-selects this exact tab by identity, title can change)." }
+    else        { Write-Output "No tab detected - using window focus (fine for a separate window)." }
     Write-Output "Say:  $($resp.wake -join '   /   ')   then your command."
     Write-Output "(Re-run /claudio:name $Name if it grabbed the wrong tab/window.)"
 } else {

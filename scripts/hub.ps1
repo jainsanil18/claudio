@@ -92,7 +92,8 @@ $httpScript = {
                         $sync.clis[$k].name = $n
                         $sync.clis[$k].wake = @("hey $n", "okay $n")
                         $sync.clis[$k].cwd  = $body.cwd
-                        $sync.clis[$k].tab  = $body.tab    # active tab name (WT) or null
+                        $sync.clis[$k].tab     = $body.tab      # tab RuntimeId (stable) or null
+                        $sync.clis[$k].tabName = $body.tabName  # tab title (for logs only)
                         $sync.clis[$k].seen = (Get-Date)
                         $sync.grammarDirty  = $true
                         $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $k; $out.cwd = $body.cwd
@@ -177,12 +178,12 @@ function Get-HubCommand {
 }
 
 function Send-ToWindow {
-    param([IntPtr]$Handle, [string]$Text, [string]$TabName)
-    # If this CLI lives in a Windows Terminal tab, select that tab first
-    # (UI Automation); harmless/no-op for separate windows.
-    if ($TabName) {
-        if (Select-TabByName -Hwnd $Handle -Name $TabName) { Start-Sleep -Milliseconds 150 }
-        else { Write-VoiceLog "tab '$TabName' not found - window focus only" 'hub' }
+    param([IntPtr]$Handle, [string]$Text, [string]$TabId, [string]$TabName)
+    # If this CLI lives in a Windows Terminal tab, re-select it by stable
+    # RuntimeId first (UI Automation); no-op for separate windows.
+    if ($TabId) {
+        if (Select-TabById -Hwnd $Handle -Id $TabId) { Start-Sleep -Milliseconds 150 }
+        else { Write-VoiceLog "tab '$TabName' (id $TabId) gone - window focus only" 'hub' }
     }
     if (-not (Set-ActiveWindow -Handle $Handle)) { Write-VoiceLog "win not focusable: $Handle" 'hub'; [console]::Beep(220, 250); return }
     Start-Sleep -Milliseconds 200
@@ -310,7 +311,7 @@ while (-not $sync.quit) {
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
     if ($cmd) {
-        Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd -TabName $cli.tab
+        Send-ToWindow -Handle ([IntPtr][int64]$hwndKey) -Text $cmd -TabId $cli.tab -TabName $cli.tabName
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
     } else { Write-VoiceLog "$($cli.name): empty command" 'hub'; [console]::Beep(330, 200) }
 }
