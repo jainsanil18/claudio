@@ -79,14 +79,21 @@ $httpScript = {
                     }
                 }
                 '*/name' {
+                    # The caller deliberately picked/focused the target window,
+                    # so just map name -> that window (overwrite freely).
                     $k = [string]$body.hwnd; $n = ([string]$body.name).Trim().ToLower()
                     if ($k -and $n) {
-                        if (-not $sync.clis.ContainsKey($k)) { $sync.clis[$k] = @{ hwnd = $k; cwd = $body.cwd; seen = (Get-Date) } }
+                        if (-not $sync.clis.ContainsKey($k)) { $sync.clis[$k] = @{ hwnd = $k; seen = (Get-Date) } }
+                        # drop any other entry that had this name (re-point it)
+                        foreach ($ok in @($sync.clis.Keys)) {
+                            if ($ok -ne $k -and $sync.clis[$ok].name -eq $n) { $sync.clis.Remove($ok) }
+                        }
                         $sync.clis[$k].name = $n
                         $sync.clis[$k].wake = @("hey $n", "okay $n")
+                        $sync.clis[$k].cwd  = $body.cwd
                         $sync.clis[$k].seen = (Get-Date)
-                        $sync.grammarDirty = $true
-                        $out.name = $n; $out.wake = $sync.clis[$k].wake
+                        $sync.grammarDirty  = $true
+                        $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $k; $out.cwd = $body.cwd
                     } else { $out.ok = $false; $out.error = 'need hwnd+name' }
                 }
                 '*/speak' {
