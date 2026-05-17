@@ -1,5 +1,5 @@
 ---
-description: List all Claudio voice commands
+description: List all Vox voice commands
 allowed-tools: Bash(powershell:*)
 ---
 

@@ -1,14 +1,14 @@
 {
-  "name": "claudio",
+  "name": "vox",
   "owner": { "name": "sanil" },
   "metadata": {
-    "description": "Local marketplace hosting the Claudio plugin."
+    "description": "Local marketplace hosting the Vox plugin."
   },
   "plugins": [
     {
-      "name": "claudio",
+      "name": "vox",
       "source": "./",
-      "description": "Claudio - hands-free voice control for Claude Code on Windows. Wake word, WinRT STT, SAPI TTS."
+      "description": "Vox - hands-free voice control for Claude Code on Windows. Wake word, WinRT STT, SAPI TTS."
     }
   ]
 }

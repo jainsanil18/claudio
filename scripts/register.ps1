@@ -1,6 +1,6 @@
-# register.ps1 - SessionStart hook. Tells the Claudio Hub this CLI exists
+# register.ps1 - SessionStart hook. Tells the Vox Hub this CLI exists
 # (keyed by its terminal window). No-op if the hub isn't running. The user
-# still has to name it with /claudio:name <name> to make it voice-addressable.
+# still has to name it with /vox:name <name> to make it voice-addressable.
 . (Join-Path $PSScriptRoot 'common.ps1')
 try {
     $cwd = $null

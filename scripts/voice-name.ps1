@@ -6,7 +6,7 @@ param([string]$Name)
 . (Join-Path $PSScriptRoot 'uia.ps1')
 
 $Name = ($Name -replace '[^A-Za-z0-9 ]', '').Trim()
-if (-not $Name) { Write-Output "Usage: /claudio:name <name>   (e.g. /claudio:name atlas)"; return }
+if (-not $Name) { Write-Output "Usage: /vox:name <name>   (e.g. /vox:name atlas)"; return }
 
 Write-Output "Naming this CLI '$Name'."
 Write-Output "CLICK YOUR CLAUDE TERMINAL TAB/WINDOW NOW -- capturing in 5 seconds..."
@@ -26,19 +26,19 @@ $termClasses = @('CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass', 'PseudoC
 $isTerm = ($termClasses -contains $cls) -or ($cls -like 'VirtualConsole*')
 if (-not $isTerm) {
     Write-Output "Captured window class '$cls' (hwnd $hwnd) -- that is NOT a terminal."
-    Write-Output "Nothing registered. Re-run /claudio:name $Name and during the countdown"
+    Write-Output "Nothing registered. Re-run /vox:name $Name and during the countdown"
     Write-Output "click the actual Claude TERMINAL tab/window (Windows Terminal / console)."
     return
 }
 if ($cls -eq 'CASCADIA_HOSTING_WINDOW_CLASS' -and -not $tabId -and -not $paneId) {
     Write-Output "That's a Windows Terminal window but no tab/pane was detected (hwnd $hwnd)."
-    Write-Output "Click directly in the Claude pane you want, then re-run /claudio:name $Name."
+    Write-Output "Click directly in the Claude pane you want, then re-run /vox:name $Name."
     return
 }
 
 $resp = Invoke-Hub 'name' @{ hwnd = $hwnd; name = $Name; cwd = (Get-Location).Path; tab = $tabId; tabName = $tabName; pane = $paneId; cls = $cls }
 if (-not $resp) {
-    Write-Output "Claudio Hub isn't running. Start it with /claudio:hub then run /claudio:name $Name again."
+    Write-Output "Vox Hub isn't running. Start it with /vox:hub then run /vox:name $Name again."
     return
 }
 if ($resp.ok) {
@@ -47,7 +47,7 @@ if ($resp.ok) {
     elseif ($tabId) { Write-Output "Tab routing ON - re-selects this tab by identity." }
     else { Write-Output "Window focus only (separate window)." }
     Write-Output "Say:  $($resp.wake -join '   /   ')   then your command."
-    Write-Output "(Re-run /claudio:name $Name if it grabbed the wrong tab/window.)"
+    Write-Output "(Re-run /vox:name $Name if it grabbed the wrong tab/window.)"
 } else {
     Write-Output "Hub error: $($resp.error)"
 }

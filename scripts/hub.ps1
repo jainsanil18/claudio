@@ -1,6 +1,6 @@
-# hub.ps1 - Claudio Hub. One tray app owns the mic/STT/TTS and routes voice to
+# hub.ps1 - Vox Hub. One tray app owns the mic/STT/TTS and routes voice to
 # many Claude CLIs. Each CLI registers (by its terminal window) and YOU name it
-# with /claudio:name <name>; the hub then listens for "hey <name>" and types
+# with /vox:name <name>; the hub then listens for "hey <name>" and types
 # into that CLI's window. Replies come back via /speak, queued + name-prefixed.
 #
 # Reuses the proven engine: SAPI wake word + persistent self-healing WinRT
@@ -19,7 +19,7 @@ if ($Stop) {
         try { Stop-Process -Id ([int]((Get-Content $hubJson -Raw | ConvertFrom-Json).pid)) -Force -EA SilentlyContinue } catch { }
         Remove-Item $hubJson -Force -EA SilentlyContinue
     }
-    Write-Output 'Claudio Hub stopped.'
+    Write-Output 'Vox Hub stopped.'
     return
 }
 
@@ -190,9 +190,18 @@ function Initialize-HubRec {
     $c = Wait-WinRtOp $script:hrec.CompileConstraintsAsync() $script:WV_SR_Compile 20000
     if ($c.Status.ToString() -ne 'Success') { throw "compile $($c.Status)" }
     if ($Warm) {
+        # A freshly built recognizer's first few real inferences come back
+        # Unknown/Rejected (cold). One throwaway pass isn't enough - spend
+        # those cold cycles HERE, on silence, so the user's first command
+        # lands warm. Per-wake this runs before the "speak now" beep, so the
+        # cost is paid while the user watches the pane focus (free time).
+        $passes = 3
+        try { if ($cfg.warmPrimePasses) { $passes = [int]$cfg.warmPrimePasses } } catch { }
         try {
             $script:hrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.4)
-            $null = Wait-WinRtOp $script:hrec.RecognizeAsync() $script:WV_SR_Result 15000
+            for ($i = 0; $i -lt $passes; $i++) {
+                $null = Wait-WinRtOp $script:hrec.RecognizeAsync() $script:WV_SR_Result 15000
+            }
         } catch { }
     }
 }
@@ -337,30 +346,30 @@ function Rebuild-Grammar {
 # ---------------------------------------------------------------------------
 $ni = New-Object System.Windows.Forms.NotifyIcon
 $ni.Icon = [System.Drawing.SystemIcons]::Application
-$ni.Text = 'Claudio Hub'
+$ni.Text = 'Vox Hub'
 $ni.Visible = $true
 $menu = New-Object System.Windows.Forms.ContextMenuStrip
 $ni.ContextMenuStrip = $menu
 function Rebuild-Menu {
     $menu.Items.Clear()
-    $h = $menu.Items.Add('Claudio Hub'); $h.Enabled = $false
+    $h = $menu.Items.Add('Vox Hub'); $h.Enabled = $false
     $menu.Items.Add('-') | Out-Null
     $named = @($sync.clis.Values | Where-Object { $_.name })
     if ($named.Count) {
         foreach ($e in $named) { $mi = $menu.Items.Add("  $($e.name)  -  $([System.IO.Path]::GetFileName([string]$e.cwd))"); $mi.Enabled = $false }
     } else {
-        $mi = $menu.Items.Add('  (no named CLIs - run /claudio:name <name>)'); $mi.Enabled = $false
+        $mi = $menu.Items.Add('  (no named CLIs - run /vox:name <name>)'); $mi.Enabled = $false
     }
     $menu.Items.Add('-') | Out-Null
     $log = $menu.Items.Add('Open log'); $log.add_Click({ Start-Process notepad (Join-Path (Get-VoiceStateDir) 'voice.log') })
-    $q = $menu.Items.Add('Quit Claudio Hub'); $q.add_Click({ $sync.quit = $true })
+    $q = $menu.Items.Add('Quit Vox Hub'); $q.add_Click({ $sync.quit = $true })
 }
 
 Write-VoiceLog 'warming hub recognizer...' 'hub'
 Initialize-HubRec -Warm
 Rebuild-Menu
 [console]::Beep(880, 120); [console]::Beep(1040, 120)
-$ni.ShowBalloonTip(2500, 'Claudio Hub', 'Running. Name a CLI with /claudio:name <name>.', 'Info')
+$ni.ShowBalloonTip(2500, 'Vox Hub', 'Running. Name a CLI with /vox:name <name>.', 'Info')
 Write-VoiceLog 'hub ready' 'hub'
 
 # ---------------------------------------------------------------------------
@@ -406,7 +415,7 @@ while (-not $sync.quit) {
     # 1) FOCUS the CLI first so you see it land before talking
     $fres = Focus-Cli -Handle $hw -TabId $cli.tab -TabName $cli.tabName -PaneId $cli.pane
     if ($fres -eq 'FAIL') {
-        Write-VoiceLog "$($cli.name): could not focus (tab gone + window not foregroundable) - re-run /claudio:name" 'hub'
+        Write-VoiceLog "$($cli.name): could not focus (tab gone + window not foregroundable) - re-run /vox:name" 'hub'
         [console]::Beep(220, 300)
         continue
     }

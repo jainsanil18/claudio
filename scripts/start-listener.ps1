@@ -11,7 +11,7 @@ if (Test-Path $hubJson) {
     try {
         $hp = [int]((Get-Content $hubJson -Raw | ConvertFrom-Json).pid)
         if (Get-Process -Id $hp -ErrorAction SilentlyContinue) {
-            Write-Output "The Claudio Hub is running (it owns the mic). Use /claudio:name <name> per CLI, or stop the hub with /claudio:hub stop before /claudio:listen."
+            Write-Output "The Vox Hub is running (it owns the mic). Use /vox:name <name> per CLI, or stop the hub with /vox:hub stop before /vox:listen."
             exit 0
         }
     } catch { }
@@ -20,7 +20,7 @@ if (Test-Path $hubJson) {
 if (Test-Path $pidFile) {
     $existing = (Get-Content $pidFile -Raw).Trim()
     if ($existing -and (Get-Process -Id $existing -ErrorAction SilentlyContinue)) {
-        Write-Output "Listener already running (pid $existing). Use /windows-voice:voice-stop first to restart."
+        Write-Output "Listener already running (pid $existing). Use /vox:stop first to restart."
         exit 0
     }
 }
@@ -42,7 +42,7 @@ if (Get-Process -Id $p.Id -ErrorAction SilentlyContinue) {
     Write-Output "Listener started (pid $($p.Id)). Target window handle: $([int64]$hwnd)."
     Write-Output "Flow: say '$($cfg.wakeWords[0])' -> wait for the HIGH beep -> speak -> just STOP talking."
     Write-Output "It sends automatically when you pause (~$($cfg.winrtEndSilenceSec)s). No end-word needed."
-    Write-Output "Keep this terminal as the active window, or run /windows-voice:voice-retarget to re-aim. Log: $(Join-Path $state 'voice.log')"
+    Write-Output "Keep this terminal as the active window, or run /vox:aim to re-aim. Log: $(Join-Path $state 'voice.log')"
 } else {
     Write-Output "Listener failed to stay running. Check the log: $(Join-Path $state 'voice.log')"
     Write-Output "Most common cause: no Windows speech recognizer for your language (Settings > Time & language > Speech)."

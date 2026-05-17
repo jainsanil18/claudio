@@ -15,13 +15,13 @@ function Get-VoiceConfig {
         voice              = ''        # '' = system default voice
         rate               = 1         # -10..10 (slightly brisk; higher = shorter deaf window)
         volume             = 100       # 0..100
-        maxChars           = 100000    # effectively uncapped - speak the full answer (use /windows-voice:hush to cut a long one)
+        maxChars           = 100000    # effectively uncapped - speak the full answer (use /vox:hush to cut a long one)
         speakCodeBlocks    = $false
         wakeWords          = @('hey claude', 'okay claude')   # bare 'claude' self-triggers on TTS
         endWords           = @('over', 'send it', 'go ahead', 'that is all', 'send')
         duplex             = 'half'    # 'half' = deaf while Claude speaks (speakers); 'full' = always listen (headset)
         ttsTailMs          = 300       # echo-settle pause after TTS ends before listening resumes
-        hubPort            = 51789     # Claudio Hub localhost IPC port
+        hubPort            = 51789     # Vox Hub localhost IPC port
         wakeConfidence     = 0.40      # SAPI wake-word floor (0..1)
         commandConfidence  = 0.30      # SAPI command floor (only if sttEngine=sapi)
         silenceGapSec      = 2.5       # quiet time that ends a command
@@ -42,7 +42,7 @@ function Get-VoiceConfig {
 }
 
 function Invoke-Hub {
-    # POST JSON to the Claudio Hub. Returns the parsed reply, or $null if the
+    # POST JSON to the Vox Hub. Returns the parsed reply, or $null if the
     # hub isn't running (callers fall back gracefully).
     param([string]$Path, [hashtable]$Body)
     try {

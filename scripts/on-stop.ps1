@@ -48,7 +48,7 @@ try {
     if ((Test-Path $hashFile) -and ((Get-Content $hashFile -Raw).Trim() -eq $hash)) { exit 0 }
     Set-Content -Path $hashFile -Value $hash
 
-    # If the Claudio Hub is running, hand the reply to it (queued, name-prefixed,
+    # If the Vox Hub is running, hand the reply to it (queued, name-prefixed,
     # spoken centrally) instead of speaking locally. Falls through if no hub.
     $hubResp = Invoke-Hub 'speak' @{ hwnd = [string][int64](Get-ForegroundWindowHandle); cwd = $payload.cwd; text = $text }
     if ($hubResp) { exit 0 }

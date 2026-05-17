@@ -1,5 +1,5 @@
 ---
-description: Start/stop/status the Claudio Hub (multi-CLI voice tray app)
+description: Start/stop/status the Vox Hub (multi-CLI voice tray app)
 argument-hint: "[start|stop|status]"
 allowed-tools: Bash(powershell:*)
 ---

@@ -52,5 +52,5 @@ catch {
 }
 
 Write-Output ""
-Write-Output $(if ($ok) { "RESULT: WinRT engine OK. Run /windows-voice:voice-listen and speak normally." }
+Write-Output $(if ($ok) { "RESULT: WinRT engine OK. Run /vox:listen and speak normally." }
                else      { "RESULT: WinRT not ready. Either fix the speech pack above, or set sttEngine to 'sapi' in $(Join-Path (Get-VoiceStateDir) 'config.json') for the legacy fallback." })

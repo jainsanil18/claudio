@@ -24,7 +24,7 @@ if ($Action -eq 'status') {
     $lp = Test-ListenerRunning
     Write-Output "Duplex mode  : $current  $(if($current -eq 'half'){'(deaf while speaking - speakers)'}else{'(always listening + barge-in - headphones)'})"
     Write-Output "Listener     : $(if($lp){"running (pid $lp)"}else{'stopped'})"
-    Write-Output "Switch with  : /windows-voice:voice-duplex full   (headphones)  |  half   (speakers)"
+    Write-Output "Switch with  : /vox:duplex full   (headphones)  |  half   (speakers)"
     return
 }
 if ($Action -ne 'half' -and $Action -ne 'full') {
@@ -64,8 +64,8 @@ if ($lp) {
     if (Get-Process -Id $np.Id -ErrorAction SilentlyContinue) {
         Write-Output "$msg Listener hot-restarted (pid $($np.Id)), same target window. Ready."
     } else {
-        Write-Output "$msg Listener restart FAILED - check $(Join-Path $state 'voice.log'). Try /windows-voice:voice-listen."
+        Write-Output "$msg Listener restart FAILED - check $(Join-Path $state 'voice.log'). Try /vox:listen."
     }
 } else {
-    Write-Output "$msg Listener isn't running - it'll use this mode next /windows-voice:voice-listen."
+    Write-Output "$msg Listener isn't running - it'll use this mode next /vox:listen."
 }
