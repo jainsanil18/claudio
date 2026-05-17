@@ -31,6 +31,8 @@ function Get-VoiceConfig {
         winrtInitialSilenceSec = 5     # how long to wait for you to start talking
         winrtEndSilenceSec     = 2.0   # silence ending ONE utterance (WinRT dictation max ~2s)
         winrtContinueSilenceSec = 2.5  # extra quiet AFTER you've spoken before it sends (think-pause grace)
+        warmPrimePasses    = 3         # startup warm-prime silent passes on a fresh recognizer
+        keepAliveSec       = 20        # idle interval to re-warm the persistent recognizer (0 = disable)
     }
     if (Test-Path $path) {
         try {

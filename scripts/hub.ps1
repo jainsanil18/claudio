@@ -219,7 +219,7 @@ function Get-HubCommand {
         $ms = [int](($sil + [double]$cfg.winrtEndSilenceSec + 10) * 1000)
         try { $res = Wait-WinRtOp $rcg.RecognizeAsync() $script:WV_SR_Result $ms }
         catch {
-            if (-not $rebuilt) { try { Initialize-HubRec; $rcg = $script:hrec; $rebuilt = $true; continue } catch { break } }
+            if (-not $rebuilt) { try { Initialize-HubRec -Warm; $rcg = $script:hrec; $script:lastWarm = Get-Date; $rebuilt = $true; continue } catch { break } }
             break
         }
         $st = $res.Status.ToString(); $cf = [int]$res.Confidence
@@ -232,12 +232,21 @@ function Get-HubCommand {
         Write-VoiceLog "no result (status=$st conf=$($res.Confidence)) cold=$cold" 'hub'
         if ($buffer.Length -gt 0) { break }
         $cold++
-        # Stale recognizer returns Unknown/Rejected WITHOUT throwing, so the
-        # exception self-heal never fires. Rebuild on silent cold-out, retry.
+        # A stale recognizer returns Unknown/Rejected WITHOUT throwing. But so
+        # does plain user silence. With the persistent recognizer kept warm by
+        # the idle keep-alive, repeated Rejected almost always means "you
+        # didn't speak" - rebuilding then would re-cold a healthy recognizer
+        # (the old bug). Only rebuild if it's genuinely stale (keep-alive off,
+        # or far past its interval), and warm the replacement.
         if ($cold -eq 2 -and -not $rebuilt) {
-            Write-VoiceLog 'recognizer cold (silent) - rebuilding' 'hub'
-            try { Initialize-HubRec; $rcg = $script:hrec; $rebuilt = $true } catch { }
-            continue
+            $staleSec = [math]::Round(((Get-Date) - $script:lastWarm).TotalSeconds)
+            $kaSec = 20; try { if ($null -ne $cfg.keepAliveSec) { $kaSec = [int]$cfg.keepAliveSec } } catch { }
+            if ($kaSec -le 0 -or $staleSec -ge ($kaSec * 2)) {
+                Write-VoiceLog "recognizer stale (${staleSec}s since warm) - rebuilding" 'hub'
+                try { Initialize-HubRec -Warm; $rcg = $script:hrec; $script:lastWarm = Get-Date; $rebuilt = $true } catch { }
+                continue
+            }
+            Write-VoiceLog "no speech (recognizer warm, ${staleSec}s) - not rebuilding" 'hub'
         }
         if ($cold -ge 4) { break }
     }
@@ -367,6 +376,7 @@ function Rebuild-Menu {
 
 Write-VoiceLog 'warming hub recognizer...' 'hub'
 Initialize-HubRec -Warm
+$script:lastWarm = Get-Date     # persistent recognizer: track last time it was exercised
 Rebuild-Menu
 [console]::Beep(880, 120); [console]::Beep(1040, 120)
 $ni.ShowBalloonTip(2500, 'Vox Hub', 'Running. Name a CLI with /vox:name <name>.', 'Info')
@@ -396,10 +406,29 @@ while (-not $sync.quit) {
         Speak-Reply $item.name $item.text
         Start-Sleep -Milliseconds ([int]$cfg.ttsTailMs)
         try { Initialize-HubRec -Warm } catch { }   # refresh after TTS (proven fix)
+        $script:lastWarm = Get-Date
         continue
     }
 
     if ($script:wakeMap.Count -eq 0) { Start-Sleep -Milliseconds 400; continue }
+
+    # Persistent-recognizer idle keep-alive. A long-lived WinRT recognizer
+    # goes stale during idle gaps and then returns garbage. The old code
+    # nuked + rebuilt it on every wake (the ~15s cold-start you hit). Instead
+    # keep THIS instance warm with a short silent recognition every
+    # keepAliveSec; only a genuine fault rebuilds (catch below + Get-HubCommand
+    # self-heal). Runs between 1s wake polls, so no race with $wakeEng.
+    $kaSec = 20; try { if ($null -ne $cfg.keepAliveSec) { $kaSec = [int]$cfg.keepAliveSec } } catch { }
+    if ($kaSec -gt 0 -and ((Get-Date) - $script:lastWarm).TotalSeconds -ge $kaSec) {
+        try {
+            $script:hrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.3)
+            $null = Wait-WinRtOp $script:hrec.RecognizeAsync() $script:WV_SR_Result 6000
+        } catch {
+            Write-VoiceLog "keep-alive fault - rebuilding recognizer: $($_.Exception.Message)" 'hub'
+            try { Initialize-HubRec -Warm } catch { }
+        }
+        $script:lastWarm = Get-Date
+    }
 
     $r = $wakeEng.Recognize([TimeSpan]::FromSeconds(1.0))
     if (-not $r) { continue }
@@ -419,13 +448,13 @@ while (-not $sync.quit) {
         [console]::Beep(220, 300)
         continue
     }
-    # 2) Rebuild the recognizer FRESH now (it goes stale during the idle gaps
-    #    between commands and silently returns garbage). Cost is paid here,
-    #    while you watch the pane focus, not when you speak.
-    try { Initialize-HubRec -Warm } catch { Write-VoiceLog "pre-capture rebuild failed: $($_.Exception.Message)" 'hub' }
+    # 2) Persistent recognizer: do NOT rebuild per-wake (that dispose+compile
+    #    was the ~15s cold-start). The idle keep-alive keeps $script:hrec warm;
+    #    Get-HubCommand still self-heals (rebuild) on a genuine cold-out/fault.
     # 3) NOW the speak-now beep, 4) capture, 5) paste into the focused CLI
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
+    $script:lastWarm = Get-Date     # just exercised the recognizer = warm
     if ($cmd) {
         Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab -PaneId $cli.pane
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
