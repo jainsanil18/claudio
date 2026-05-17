@@ -38,6 +38,19 @@ if (-not $accepted) {
     return
 }
 
+# SINGLE HUB: kill every other hub.ps1 process. hub.json-based stop orphans
+# older hubs (its pid gets overwritten each start); a stale hub keeps serving
+# OLD code on the port while new ones run headless. This guarantees exactly
+# one hub, always the latest code.
+try {
+    # Match ONLY processes whose -File arg is ...\hub.ps1 (not voice-hub.ps1,
+    # not launchers/harnesses that merely mention the path in -Command).
+    Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+        Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '-File\s+"?[^"]*\\hub\.ps1' } |
+        ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue } catch { } }
+    Start-Sleep -Milliseconds 800
+} catch { }
+
 # One mic: the single-CLI listener and the hub cannot coexist. Stop any
 # running listener so it doesn't contend for the microphone.
 $lpf = Join-Path $state 'listener.pid'
@@ -68,7 +81,8 @@ $httpScript = {
     param($sync)
     $listener = New-Object System.Net.HttpListener
     $listener.Prefixes.Add("http://127.0.0.1:$($sync.port)/")
-    try { $listener.Start() } catch { return }
+    try { $listener.Start() } catch { $sync.httpFailed = $true; return }
+    $sync.httpUp = $true
     while (-not $sync.quit) {
         try { $ctx = $listener.GetContext() } catch { break }
         try {
@@ -83,33 +97,43 @@ $httpScript = {
             switch -Wildcard ($path) {
                 '*/ping' { $out.port = $sync.port }
                 '*/register' {
-                    $k = [string]$body.hwnd
-                    if ($k) {
+                    # Only the window hwnd here - tabs/panes share it, so this
+                    # is just a cosmetic pending entry. Real identity comes
+                    # from /name (which carries tab/pane RuntimeIds).
+                    $hw = [string]$body.hwnd
+                    if ($hw) {
+                        $k = "win:$hw"
                         if (-not $sync.clis.ContainsKey($k)) {
-                            $sync.clis[$k] = @{ hwnd = $k; cwd = $body.cwd; name = $null; wake = @(); seen = (Get-Date) }
-                        } else { $sync.clis[$k].seen = (Get-Date); $sync.clis[$k].cwd = $body.cwd }
-                        $out.named = [bool]$sync.clis[$k].name
+                            $sync.clis[$k] = @{ hwnd = $hw; cwd = $body.cwd; name = $null; wake = @(); seen = (Get-Date) }
+                        } else { $sync.clis[$k].seen = (Get-Date) }
                     }
                 }
                 '*/name' {
-                    # The caller deliberately picked/focused the target window,
-                    # so just map name -> that window (overwrite freely).
-                    $k = [string]$body.hwnd; $n = ([string]$body.name).Trim().ToLower()
-                    if ($k -and $n) {
-                        if (-not $sync.clis.ContainsKey($k)) { $sync.clis[$k] = @{ hwnd = $k; seen = (Get-Date) } }
-                        # drop any other entry that had this name (re-point it)
+                    # Key by the CLI's UNIQUE identity (pane > tab > window) so
+                    # multiple tabs/panes in ONE Terminal window don't collide
+                    # on the shared hwnd and overwrite each other.
+                    $hw = [string]$body.hwnd; $n = ([string]$body.name).Trim().ToLower()
+                    $k = if ($body.pane) { "pane:$($body.pane)" }
+                         elseif ($body.tab) { "tab:$($body.tab)" }
+                         else { "win:$hw" }
+                    if ($hw -and $n) {
+                        if (-not $sync.clis.ContainsKey($k)) { $sync.clis[$k] = @{ seen = (Get-Date) } }
+                        # drop any OTHER entry already using this name (re-point)
                         foreach ($ok in @($sync.clis.Keys)) {
                             if ($ok -ne $k -and $sync.clis[$ok].name -eq $n) { $sync.clis.Remove($ok) }
                         }
-                        $sync.clis[$k].name = $n
-                        $sync.clis[$k].wake = @("hey $n", "okay $n")
-                        $sync.clis[$k].cwd  = $body.cwd
-                        $sync.clis[$k].tab     = $body.tab      # tab RuntimeId or null
-                        $sync.clis[$k].tabName = $body.tabName  # tab title (logs only)
-                        $sync.clis[$k].pane    = $body.pane     # focused split-pane RuntimeId or null
-                        $sync.clis[$k].seen = (Get-Date)
-                        $sync.grammarDirty  = $true
-                        $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $k; $out.cwd = $body.cwd
+                        # also drop the cosmetic win: pending entry for this window
+                        if ($k -ne "win:$hw" -and $sync.clis.ContainsKey("win:$hw") -and -not $sync.clis["win:$hw"].name) { $sync.clis.Remove("win:$hw") }
+                        $sync.clis[$k].hwnd    = $hw
+                        $sync.clis[$k].name    = $n
+                        $sync.clis[$k].wake    = @("hey $n", "okay $n")
+                        $sync.clis[$k].cwd     = $body.cwd
+                        $sync.clis[$k].tab     = $body.tab
+                        $sync.clis[$k].tabName = $body.tabName
+                        $sync.clis[$k].pane    = $body.pane
+                        $sync.clis[$k].seen    = (Get-Date)
+                        $sync.grammarDirty     = $true
+                        $out.name = $n; $out.wake = $sync.clis[$k].wake; $out.hwnd = $hw; $out.cwd = $body.cwd
                     } else { $out.ok = $false; $out.error = 'need hwnd+name' }
                 }
                 '*/speak' {
@@ -143,6 +167,17 @@ $rs.SessionStateProxy.SetVariable('sync', $sync)
 $httpPs = [powershell]::Create(); $httpPs.Runspace = $rs
 [void]$httpPs.AddScript($httpScript).AddArgument($sync)
 [void]$httpPs.BeginInvoke()
+
+# Don't run headless: if the port couldn't bind, bail loudly instead of
+# sitting there useless while a stale hub serves old code.
+$waited = 0
+while (-not $sync.httpUp -and -not $sync.httpFailed -and $waited -lt 30) { Start-Sleep -Milliseconds 200; $waited++ }
+if ($sync.httpFailed -or -not $sync.httpUp) {
+    Write-VoiceLog "FATAL hub: port $port already in use (another hub?). Exiting." 'hub'
+    Remove-Item $hubJson -Force -EA SilentlyContinue
+    return
+}
+Write-VoiceLog "hub HTTP listening on $port" 'hub'
 
 # ---------------------------------------------------------------------------
 # Speech engine (reused, proven): persistent WinRT recognizer + self-heal
@@ -282,9 +317,10 @@ function Rebuild-Grammar {
     $script:wakeMap = @{}
     $choices = New-Object System.Speech.Recognition.Choices
     $any = $false
-    foreach ($e in $sync.clis.Values) {
+    foreach ($k in @($sync.clis.Keys)) {
+        $e = $sync.clis[$k]
         if (-not $e.name) { continue }
-        foreach ($w in $e.wake) { $choices.Add([string]$w); $script:wakeMap[[string]$w] = $e.hwnd; $any = $true }
+        foreach ($w in $e.wake) { $choices.Add([string]$w); $script:wakeMap[[string]$w] = $k; $any = $true }
     }
     if ($any) {
         $gb = New-Object System.Speech.Recognition.GrammarBuilder
@@ -334,10 +370,12 @@ $isHalf = ($cfg.duplex -eq 'half')
 while (-not $sync.quit) {
     [System.Windows.Forms.Application]::DoEvents()
 
-    # prune dead windows
+    # prune entries whose WINDOW is gone (tabs/panes closing inside a live
+    # window aren't detectable here - re-naming re-points those).
     $dead = @()
     foreach ($k in @($sync.clis.Keys)) {
-        if (-not [WinVoiceNative]::IsWindow([IntPtr][int64]$k)) { $dead += $k }
+        $hwv = 0; [void][int64]::TryParse([string]$sync.clis[$k].hwnd, [ref]$hwv)
+        if ($hwv -eq 0 -or -not [WinVoiceNative]::IsWindow([IntPtr]$hwv)) { $dead += $k }
     }
     if ($dead.Count) { foreach ($k in $dead) { $sync.clis.Remove($k) }; $sync.grammarDirty = $true }
 
@@ -359,12 +397,12 @@ while (-not $sync.quit) {
     if ($r.Grammar.Name -ne 'wake' -or $r.Confidence -lt [double]$cfg.wakeConfidence) { continue }
     $phrase = $r.Text.ToLower()
     if (-not $script:wakeMap.ContainsKey($phrase)) { continue }
-    $hwndKey = $script:wakeMap[$phrase]
-    if (-not $sync.clis.ContainsKey($hwndKey)) { continue }
-    $cli = $sync.clis[$hwndKey]
+    $key = $script:wakeMap[$phrase]
+    if (-not $sync.clis.ContainsKey($key)) { continue }
+    $cli = $sync.clis[$key]
     Write-VoiceLog "wake '$phrase' -> $($cli.name) conf=$([math]::Round($r.Confidence,2))" 'hub'
     [console]::Beep(440, 90)        # low tick = "heard you, focusing $($cli.name)"
-    $hw = [IntPtr][int64]$hwndKey
+    $hw = [IntPtr][int64]$cli.hwnd
     # 1) FOCUS the CLI first so you see it land before talking
     $fres = Focus-Cli -Handle $hw -TabId $cli.tab -TabName $cli.tabName -PaneId $cli.pane
     if ($fres -eq 'FAIL') {

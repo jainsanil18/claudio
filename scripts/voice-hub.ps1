@@ -28,7 +28,12 @@ switch ($Action) {
         }
     }
     'stop' {
-        powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $PSScriptRoot 'hub.ps1') -Stop
+        $killed = @()
+        Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
+            Where-Object { $_.CommandLine -match '-File\s+"?[^"]*\\hub\.ps1' } |
+            ForEach-Object { try { Stop-Process -Id $_.ProcessId -Force -EA SilentlyContinue; $killed += $_.ProcessId } catch { } }
+        Remove-Item $hubJson -Force -EA SilentlyContinue
+        Write-Output ("Claudio Hub stopped. " + $(if ($killed.Count) { "Killed: $($killed -join ', ')." } else { "Nothing was running." }))
     }
     'status' {
         if (-not (Test-HubAlive)) { Write-Output 'Claudio Hub: NOT running. Start with /claudio:hub.'; return }
