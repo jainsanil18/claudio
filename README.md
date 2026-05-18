@@ -21,20 +21,25 @@ wedges.
 
 ## Install
 
-Windows + Claude Code required. Install from the local plugin directory:
+Windows + Claude Code required. In Claude Code, run:
 
 ```
-/plugin marketplace add <path>\windows-voice
+/plugin marketplace add jainsanil18/vox
 /plugin install vox@vox
 ```
 
-Or: `claude --plugin-dir <path>\windows-voice`
+Pulls straight from GitHub, no clone. Restart Claude Code so the `Stop` hook
+loads.
 
-Restart Claude Code so the `Stop` hook loads.
+<details><summary>Local dev install</summary>
 
-> The public GitHub repo (`github.com/jainsanil18/claudio`) still uses the old
-> `claudio` name until the rename is pushed; the local install above uses the
-> new `vox` name.
+```
+git clone https://github.com/jainsanil18/vox.git
+/plugin marketplace add <path>\vox
+/plugin install vox@vox
+```
+Or: `claude --plugin-dir <path>\vox`
+</details>
 
 First run:
 1. `/vox:check` -- verify the WinRT speech engine.
