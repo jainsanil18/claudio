@@ -414,39 +414,12 @@ while (-not $sync.quit) {
 
     if ($script:wakeMap.Count -eq 0) { Start-Sleep -Milliseconds 400; continue }
 
-    # Persistent-recognizer idle keep-alive. Best-effort warm touch every
-    # keepAliveSec of idle. RecognizeAsync on silence often does NOT return
-    # promptly, so we cap the wait and CANCEL the pending op on timeout (a
-    # dangling op would block the next real command). A keep-alive miss is
-    # NOT a failure: do NOT rebuild here (that ~12s warm-rebuild was the
-    # regression). Genuine staleness is handled in Get-HubCommand, at the
-    # right time. $lastKeepAlive throttles attempts so a perpetually-timing-
-    # out touch can't fire every loop; $lastWarm advances only on success.
-    $kaSec = 20; try { if ($null -ne $cfg.keepAliveSec) { $kaSec = [int]$cfg.keepAliveSec } } catch { }
-    if ($kaSec -gt 0 -and ((Get-Date) - $script:lastKeepAlive).TotalSeconds -ge $kaSec) {
-        $script:lastKeepAlive = Get-Date
-        try {
-            $script:hrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.3)
-            $kaOp = $script:hrec.RecognizeAsync()
-            try {
-                $null = Wait-WinRtOp $kaOp $script:WV_SR_Result 2500
-                $script:lastWarm = Get-Date          # touched OK = warm
-            } catch {
-                try { $kaOp.Cancel() } catch { }
-                Write-VoiceLog 'keep-alive timed out (op canceled, no rebuild)' 'hub'
-            }
-        } catch {
-            # RecognizeAsync THREW synchronously = the recognizer object is
-            # hard-faulted/dead (e.g. "text associated with this error code
-            # could not be found"). Unlike a silence timeout (benign, inner
-            # catch), a dead recognizer never self-heals - it must be rebuilt
-            # or it throws here forever AND every later command cold-misses.
-            # Fires only on a genuine fault, so no per-tick rebuild / no spam.
-            Write-VoiceLog "keep-alive fault - rebuilding recognizer: $($_.Exception.Message)" 'hub'
-            try { Initialize-HubRec -Warm; $script:lastWarm = Get-Date } catch { }
-        }
-    }
-
+    # NO idle keep-alive. Poking an idle WinRT recognizer with RecognizeAsync
+    # every N seconds is exactly what triggers the "could not be found" stale
+    # fault + churn. Instead the WinRT recognizer is built FRESH per wake,
+    # during the focus pause below (so it is never idle long enough to go
+    # stale, and the build cost is hidden behind focusing). "Always listening"
+    # is the SAPI wake engine on the next line - it never sleeps.
     $r = $wakeEng.Recognize([TimeSpan]::FromSeconds(1.0))
     if (-not $r) { continue }
     if ($r.Grammar.Name -ne 'wake' -or $r.Confidence -lt [double]$cfg.wakeConfidence) { continue }
@@ -465,9 +438,11 @@ while (-not $sync.quit) {
         [console]::Beep(220, 300)
         continue
     }
-    # 2) Persistent recognizer: do NOT rebuild per-wake (that dispose+compile
-    #    was the ~15s cold-start). The idle keep-alive keeps $script:hrec warm;
-    #    Get-HubCommand still self-heals (rebuild) on a genuine cold-out/fault.
+    # 2) Build the WinRT recognizer FRESH now, during the focus pause. A
+    #    just-constructed recognizer is never stale, so there is no keep-alive
+    #    and no "could not be found" fault. The mic stays warm (the SAPI wake
+    #    engine holds it continuously), so this is ~1-2s, hidden behind focus.
+    try { Initialize-HubRec -Warm } catch { Write-VoiceLog "pre-capture build failed: $($_.Exception.Message)" 'hub' }
     # 3) NOW the speak-now beep, 4) capture, 5) paste into the focused CLI
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
