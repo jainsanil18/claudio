@@ -64,6 +64,7 @@ if (Test-Path $lpf) {
 }
 
 Set-Content -Path $hubJson -Value (@{ port = $port; pid = $PID } | ConvertTo-Json) -Encoding UTF8
+Clear-VoiceCmds   # fresh hub session = clean voiced-command slate
 Write-VoiceLog "hub starting (pid $PID, port $port)" 'hub'
 
 # ---- shared state across the HTTP runspace and the main loop ----
@@ -376,7 +377,8 @@ function Rebuild-Menu {
 
 Write-VoiceLog 'warming hub recognizer...' 'hub'
 Initialize-HubRec -Warm
-$script:lastWarm = Get-Date     # persistent recognizer: track last time it was exercised
+$script:lastWarm = Get-Date     # last time the recognizer was actually exercised OK
+$script:lastKeepAlive = Get-Date  # throttles keep-alive attempts (success or not)
 Rebuild-Menu
 [console]::Beep(880, 120); [console]::Beep(1040, 120)
 $ni.ShowBalloonTip(2500, 'Vox Hub', 'Running. Name a CLI with /vox:name <name>.', 'Info')
@@ -412,22 +414,30 @@ while (-not $sync.quit) {
 
     if ($script:wakeMap.Count -eq 0) { Start-Sleep -Milliseconds 400; continue }
 
-    # Persistent-recognizer idle keep-alive. A long-lived WinRT recognizer
-    # goes stale during idle gaps and then returns garbage. The old code
-    # nuked + rebuilt it on every wake (the ~15s cold-start you hit). Instead
-    # keep THIS instance warm with a short silent recognition every
-    # keepAliveSec; only a genuine fault rebuilds (catch below + Get-HubCommand
-    # self-heal). Runs between 1s wake polls, so no race with $wakeEng.
+    # Persistent-recognizer idle keep-alive. Best-effort warm touch every
+    # keepAliveSec of idle. RecognizeAsync on silence often does NOT return
+    # promptly, so we cap the wait and CANCEL the pending op on timeout (a
+    # dangling op would block the next real command). A keep-alive miss is
+    # NOT a failure: do NOT rebuild here (that ~12s warm-rebuild was the
+    # regression). Genuine staleness is handled in Get-HubCommand, at the
+    # right time. $lastKeepAlive throttles attempts so a perpetually-timing-
+    # out touch can't fire every loop; $lastWarm advances only on success.
     $kaSec = 20; try { if ($null -ne $cfg.keepAliveSec) { $kaSec = [int]$cfg.keepAliveSec } } catch { }
-    if ($kaSec -gt 0 -and ((Get-Date) - $script:lastWarm).TotalSeconds -ge $kaSec) {
+    if ($kaSec -gt 0 -and ((Get-Date) - $script:lastKeepAlive).TotalSeconds -ge $kaSec) {
+        $script:lastKeepAlive = Get-Date
         try {
             $script:hrec.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds(0.3)
-            $null = Wait-WinRtOp $script:hrec.RecognizeAsync() $script:WV_SR_Result 6000
+            $kaOp = $script:hrec.RecognizeAsync()
+            try {
+                $null = Wait-WinRtOp $kaOp $script:WV_SR_Result 2500
+                $script:lastWarm = Get-Date          # touched OK = warm
+            } catch {
+                try { $kaOp.Cancel() } catch { }
+                Write-VoiceLog 'keep-alive timed out (op canceled, no rebuild)' 'hub'
+            }
         } catch {
-            Write-VoiceLog "keep-alive fault - rebuilding recognizer: $($_.Exception.Message)" 'hub'
-            try { Initialize-HubRec -Warm } catch { }
+            Write-VoiceLog "keep-alive error: $($_.Exception.Message)" 'hub'
         }
-        $script:lastWarm = Get-Date
     }
 
     $r = $wakeEng.Recognize([TimeSpan]::FromSeconds(1.0))
@@ -457,6 +467,7 @@ while (-not $sync.quit) {
     $script:lastWarm = Get-Date     # just exercised the recognizer = warm
     if ($cmd) {
         Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab -PaneId $cli.pane
+        Add-VoiceCmd $cmd    # mark this prompt as VOICED so the Stop hook speaks its reply
         Write-VoiceLog "$($cli.name) <- '$cmd'" 'hub'
     } else { Write-VoiceLog "$($cli.name): empty command" 'hub'; [console]::Beep(330, 200) }
 }
