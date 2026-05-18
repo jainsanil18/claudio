@@ -208,21 +208,36 @@ function Initialize-HubRec {
 }
 
 function Get-HubCommand {
-    $rcg = $script:hrec
-    # (no beep here - the main loop beeps AFTER focusing the CLI)
-    $buffer = New-Object System.Text.StringBuilder
-    $start = Get-Date; $first = $true; $cold = 0; $rebuilt = $false
+    # Contract: the recognizer was just built fresh in the wake handler.
+    #  - Wait up to $waitSec (10s) for the user to START speaking.
+    #  - Nothing in 10s  -> return empty: hub RESETS, ready for the next wake.
+    #  - Speech heard     -> keep capturing across short pauses until they
+    #    stop, then return it (capped by maxCommandSec for one long command).
+    # No mid-command rebuilds, no cold counter - fresh-per-wake makes the old
+    # staleness self-heal unnecessary and it was the source of the long
+    # dead-windows where repeated "hey <name>" went unheard.
+    $rcg     = $script:hrec
+    $buffer  = New-Object System.Text.StringBuilder
+    $start   = Get-Date
+    $first   = $true
+    $waitSec = 10
+    try { if ($null -ne $cfg.commandWaitSec) { $waitSec = [int]$cfg.commandWaitSec } } catch { }
+
     while ($true) {
         if ($sync.quit) { break }
-        if (((Get-Date) - $start).TotalSeconds -ge [double]$cfg.maxCommandSec) { break }
+        $elapsed = ((Get-Date) - $start).TotalSeconds
+        if ($buffer.Length -eq 0 -and $elapsed -ge $waitSec) {
+            Write-VoiceLog "no speech in ${waitSec}s - reset, ready for next wake" 'hub'; break
+        }
+        if ($elapsed -ge [double]$cfg.maxCommandSec) {
+            Write-VoiceLog 'command time cap reached' 'hub'; break
+        }
         $sil = if ($first) { [double]$cfg.winrtInitialSilenceSec } else { [double]$cfg.winrtContinueSilenceSec }
         try { $rcg.Timeouts.InitialSilenceTimeout = [TimeSpan]::FromSeconds($sil) } catch { }
-        $ms = [int](($sil + [double]$cfg.winrtEndSilenceSec + 10) * 1000)
+        $ms = [int](($sil + [double]$cfg.winrtEndSilenceSec + 8) * 1000)
         try { $res = Wait-WinRtOp $rcg.RecognizeAsync() $script:WV_SR_Result $ms }
-        catch {
-            if (-not $rebuilt) { try { Initialize-HubRec -Warm; $rcg = $script:hrec; $script:lastWarm = Get-Date; $rebuilt = $true; continue } catch { break } }
-            break
-        }
+        catch { Write-VoiceLog "recognize error - reset: $($_.Exception.Message)" 'hub'; break }
+
         $st = $res.Status.ToString(); $cf = [int]$res.Confidence
         $tx = ''; if ($res.Text) { $tx = $res.Text.Trim() }
         if ($st -eq 'Success' -and $tx -and $cf -le 2) {
@@ -230,26 +245,9 @@ function Get-HubCommand {
             [void]$buffer.Append(' ').Append($tx); $first = $false
             continue
         }
-        Write-VoiceLog "no result (status=$st conf=$($res.Confidence)) cold=$cold" 'hub'
-        if ($buffer.Length -gt 0) { break }
-        $cold++
-        # A stale recognizer returns Unknown/Rejected WITHOUT throwing. But so
-        # does plain user silence. With the persistent recognizer kept warm by
-        # the idle keep-alive, repeated Rejected almost always means "you
-        # didn't speak" - rebuilding then would re-cold a healthy recognizer
-        # (the old bug). Only rebuild if it's genuinely stale (keep-alive off,
-        # or far past its interval), and warm the replacement.
-        if ($cold -eq 2 -and -not $rebuilt) {
-            $staleSec = [math]::Round(((Get-Date) - $script:lastWarm).TotalSeconds)
-            $kaSec = 20; try { if ($null -ne $cfg.keepAliveSec) { $kaSec = [int]$cfg.keepAliveSec } } catch { }
-            if ($kaSec -le 0 -or $staleSec -ge ($kaSec * 2)) {
-                Write-VoiceLog "recognizer stale (${staleSec}s since warm) - rebuilding" 'hub'
-                try { Initialize-HubRec -Warm; $rcg = $script:hrec; $script:lastWarm = Get-Date; $rebuilt = $true } catch { }
-                continue
-            }
-            Write-VoiceLog "no speech (recognizer warm, ${staleSec}s) - not rebuilding" 'hub'
-        }
-        if ($cold -ge 4) { break }
+        # no usable result this round
+        if ($buffer.Length -gt 0) { break }   # spoke, then stopped -> done
+        # else: keep waiting until the 10s reset deadline (loop)
     }
     return $buffer.ToString().Trim()
 }
@@ -442,11 +440,15 @@ while (-not $sync.quit) {
     #    just-constructed recognizer is never stale, so there is no keep-alive
     #    and no "could not be found" fault. The mic stays warm (the SAPI wake
     #    engine holds it continuously), so this is ~1-2s, hidden behind focus.
-    try { Initialize-HubRec -Warm } catch { Write-VoiceLog "pre-capture build failed: $($_.Exception.Message)" 'hub' }
+    try { Initialize-HubRec -Warm; $script:lastWarm = Get-Date } catch { Write-VoiceLog "pre-capture build failed: $($_.Exception.Message)" 'hub' }
     # 3) NOW the speak-now beep, 4) capture, 5) paste into the focused CLI
     [console]::Beep(988, 150)
     $cmd = Get-HubCommand
-    $script:lastWarm = Get-Date     # just exercised the recognizer = warm
+    # Release the mic NOW so the SAPI wake engine can hear the next
+    # "hey <name>". A lingering WinRT recognizer hogs the default capture
+    # device and the wake word goes unheard until the next rebuild. We build
+    # fresh per wake anyway, so dispose here is free.
+    try { if ($script:hrec) { $script:hrec.Dispose(); $script:hrec = $null } } catch { }
     if ($cmd) {
         Inject-Text -Handle $hw -Text $cmd -TabId $cli.tab -PaneId $cli.pane
         Add-VoiceCmd $cmd    # mark this prompt as VOICED so the Stop hook speaks its reply
