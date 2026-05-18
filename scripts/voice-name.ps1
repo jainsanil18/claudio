@@ -9,7 +9,7 @@ $Name = ($Name -replace '[^A-Za-z0-9 ]', '').Trim()
 if (-not $Name) { Write-Output "Usage: /vox:name <name>   (e.g. /vox:name atlas)"; return }
 
 Write-Output "Naming this CLI '$Name'."
-Write-Output "CLICK YOUR CLAUDE TERMINAL TAB/WINDOW NOW -- capturing in 5 seconds..."
+Write-Output "CLICK inside the Claude PANE you want as '$Name' and LEAVE the mouse there -- capturing in 5 seconds..."
 Start-Sleep -Seconds 5
 $h     = Get-ForegroundWindowHandle
 $hwnd  = [string][int64]$h
@@ -17,9 +17,14 @@ $cls   = Get-WindowClass -Handle $h
 $ti    = Get-ActiveTab -Hwnd $h          # selected tab's stable RuntimeId + name
 $tabId = $null; $tabName = $null
 if ($ti) { $tabId = $ti.id; $tabName = $ti.name }
-$pane  = Get-ActivePane -Hwnd $h         # the split PANE you focused (Alt+Shift+- splits)
-$paneId = $null
-if ($pane) { $paneId = $pane.id }
+# Pane identity = WHERE you clicked. UIA FocusedElement was flaky and when it
+# returned null the key fell back to the tab id, which is SHARED by every
+# split pane in a tab -> the next /vox:name silently overwrote the previous.
+# A screen point is unique per pane and rock-solid.
+$cur    = [WinVoiceNative]::GetCursor()
+$paneId = "pt:$($cur.X),$($cur.Y)"
+$pane   = Get-ActivePane -Hwnd $h
+$paneNm = if ($pane) { $pane.name } else { '' }
 
 # Validate we actually captured a terminal, not the editor / a browser / etc.
 $termClasses = @('CASCADIA_HOSTING_WINDOW_CLASS', 'ConsoleWindowClass', 'PseudoConsoleWindow')

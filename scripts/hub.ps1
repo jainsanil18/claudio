@@ -436,7 +436,14 @@ while (-not $sync.quit) {
                 Write-VoiceLog 'keep-alive timed out (op canceled, no rebuild)' 'hub'
             }
         } catch {
-            Write-VoiceLog "keep-alive error: $($_.Exception.Message)" 'hub'
+            # RecognizeAsync THREW synchronously = the recognizer object is
+            # hard-faulted/dead (e.g. "text associated with this error code
+            # could not be found"). Unlike a silence timeout (benign, inner
+            # catch), a dead recognizer never self-heals - it must be rebuilt
+            # or it throws here forever AND every later command cold-misses.
+            # Fires only on a genuine fault, so no per-tick rebuild / no spam.
+            Write-VoiceLog "keep-alive fault - rebuilding recognizer: $($_.Exception.Message)" 'hub'
+            try { Initialize-HubRec -Warm; $script:lastWarm = Get-Date } catch { }
         }
     }
 

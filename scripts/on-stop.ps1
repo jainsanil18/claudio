@@ -41,12 +41,41 @@ try {
 
     $cfg = Get-VoiceConfig
 
+    # Voice-only gate: only speak if the prompt that triggered this reply came
+    # in by voice (the hub recorded it). Typed prompts stay silent. Walk back
+    # to the last real user prompt (skip tool_result-only user turns).
+    if ($cfg.speakVoiceOnly) {
+        $userText = $null
+        for ($j = $lines.Count - 1; $j -ge 0; $j--) {
+            $uln = $lines[$j]
+            if ([string]::IsNullOrWhiteSpace($uln)) { continue }
+            try { $uo = $uln | ConvertFrom-Json } catch { continue }
+            if (-not (($uo.type -eq 'user') -or ($uo.message.role -eq 'user'))) { continue }
+            $uc = $uo.message.content
+            if (-not $uc) { continue }
+            $usb = New-Object System.Text.StringBuilder
+            if ($uc -is [string]) { [void]$usb.Append($uc) }
+            else { foreach ($b in $uc) { if ($b.type -eq 'text' -and $b.text) { [void]$usb.AppendLine($b.text) } } }
+            $cand = $usb.ToString().Trim()
+            if ($cand.Length -gt 0) { $userText = $cand; break }
+        }
+        if (-not (Test-WasVoiceCmd $userText)) {
+            Write-VoiceLog 'skip TTS: last prompt was typed, not voiced' 'on-stop'
+            exit 0
+        }
+    }
+
     # Dedupe: the Stop hook can fire more than once for the same final message.
     $sha  = [System.Security.Cryptography.SHA1]::Create()
     $hash = [BitConverter]::ToString($sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($text))).Replace('-', '')
     $hashFile = Join-Path (Get-VoiceStateDir) 'last-hash.txt'
     if ((Test-Path $hashFile) -and ((Get-Content $hashFile -Raw).Trim() -eq $hash)) { exit 0 }
     Set-Content -Path $hashFile -Value $hash
+
+    # Committed to speaking now: consume this voiced command so it stays
+    # matchable for arbitrarily long tasks but can't false-match a later
+    # typed prompt with the same words.
+    if ($cfg.speakVoiceOnly -and $userText) { Remove-VoiceCmd $userText }
 
     # If the Vox Hub is running, hand the reply to it (queued, name-prefixed,
     # spoken centrally) instead of speaking locally. Falls through if no hub.

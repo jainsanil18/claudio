@@ -33,6 +33,9 @@ function Get-VoiceConfig {
         winrtContinueSilenceSec = 2.5  # extra quiet AFTER you've spoken before it sends (think-pause grace)
         warmPrimePasses    = 3         # startup warm-prime silent passes on a fresh recognizer
         keepAliveSec       = 20        # idle interval to re-warm the persistent recognizer (0 = disable)
+        speakVoiceOnly     = $true     # only speak replies to VOICED prompts; stay silent on typed ones
+        voiceCmdTtlSec     = 0         # voiced cmd stays matchable until consumed (0 = no expiry)
+        voiceCmdRing       = 50        # safety cap on unconsumed voiced commands kept
     }
     if (Test-Path $path) {
         try {
@@ -67,6 +70,81 @@ function Test-SpeakEnabled {
     Test-Path (Join-Path (Get-VoiceStateDir) 'speak.enabled')
 }
 
+# --- Voiced-command ring: lets the Stop hook tell a VOICED prompt from a
+#     TYPED one. The hub appends every command it pastes; on-stop checks
+#     whether the prompt that triggered a reply came through here. ---
+function Get-NormText {
+    param([string]$Text)
+    if (-not $Text) { return '' }
+    $t = $Text.ToLowerInvariant()
+    $t = [regex]::Replace($t, '\s+', ' ')
+    return $t.Trim().Trim([char[]]@('.', '!', '?', ',', ';', ':', '"', "'", '`', ' '))
+}
+
+function Add-VoiceCmd {
+    param([string]$Text)
+    try {
+        $n = Get-NormText $Text
+        if (-not $n) { return }
+        $f   = Join-Path (Get-VoiceStateDir) 'voice-cmds.jsonl'
+        $now = [int][double]((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds
+        Add-Content -Path $f -Value (@{ t = $now; x = $n } | ConvertTo-Json -Compress) -Encoding UTF8
+        $max = [int](Get-VoiceConfig).voiceCmdRing
+        $all = @(Get-Content $f -ErrorAction SilentlyContinue)
+        if ($all.Count -gt $max) { Set-Content -Path $f -Value ($all[($all.Count-$max)..($all.Count-1)]) -Encoding UTF8 }
+    } catch { }
+}
+
+function Test-WasVoiceCmd {
+    param([string]$Text)
+    try {
+        $n = Get-NormText $Text
+        if (-not $n) { return $false }
+        $f = Join-Path (Get-VoiceStateDir) 'voice-cmds.jsonl'
+        if (-not (Test-Path $f)) { return $false }
+        $ttl = [double](Get-VoiceConfig).voiceCmdTtlSec
+        $now = [double]((Get-Date).ToUniversalTime() - [datetime]'1970-01-01').TotalSeconds
+        foreach ($ln in (Get-Content $f -ErrorAction SilentlyContinue)) {
+            if ([string]::IsNullOrWhiteSpace($ln)) { continue }
+            try { $o = $ln | ConvertFrom-Json } catch { continue }
+            if ($ttl -gt 0 -and ($now - [double]$o.t) -gt $ttl) { continue }
+            if ([string]$o.x -eq $n) { return $true }
+        }
+        return $false
+    } catch { return $false }
+}
+
+# Consume one voiced command: drop the FIRST matching entry so its reply is
+# spoken exactly once and the words can't false-match a later typed prompt.
+function Remove-VoiceCmd {
+    param([string]$Text)
+    try {
+        $n = Get-NormText $Text
+        if (-not $n) { return }
+        $f = Join-Path (Get-VoiceStateDir) 'voice-cmds.jsonl'
+        if (-not (Test-Path $f)) { return }
+        $kept = New-Object System.Collections.Generic.List[string]
+        $dropped = $false
+        foreach ($ln in (Get-Content $f -ErrorAction SilentlyContinue)) {
+            if ([string]::IsNullOrWhiteSpace($ln)) { continue }
+            if (-not $dropped) {
+                try { $o = $ln | ConvertFrom-Json } catch { $o = $null }
+                if ($o -and [string]$o.x -eq $n) { $dropped = $true; continue }
+            }
+            $kept.Add($ln)
+        }
+        if ($dropped) {
+            if ($kept.Count) { Set-Content -Path $f -Value $kept -Encoding UTF8 }
+            else { Remove-Item $f -Force -ErrorAction SilentlyContinue }
+        }
+    } catch { }
+}
+
+# Wipe the ring (called on hub start so a fresh session = clean slate).
+function Clear-VoiceCmds {
+    try { Remove-Item (Join-Path (Get-VoiceStateDir) 'voice-cmds.jsonl') -Force -ErrorAction SilentlyContinue } catch { }
+}
+
 # --- Win32 window helpers (load once) ---
 if (-not ('WinVoiceNative' -as [type])) {
     Add-Type @"
@@ -92,8 +170,10 @@ public static class WinVoiceNative {
     [DllImport("user32.dll")] public static extern void mouse_event(uint f, uint dx, uint dy, uint d, IntPtr e);
     [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int GetClassName(IntPtr h, System.Text.StringBuilder s, int n);
 
-    // Click an absolute screen point (used to focus a specific WT split pane
-    // by its UIA bounding rectangle). Saves/restores the cursor.
+    public static WVPOINT GetCursor() { WVPOINT p; GetCursorPos(out p); return p; }
+
+    // Click an absolute screen point (used to focus a specific WT split pane).
+    // Saves/restores the cursor.
     public static bool ClickPoint(int x, int y) {
         WVPOINT old; GetCursorPos(out old);
         SetCursorPos(x, y);

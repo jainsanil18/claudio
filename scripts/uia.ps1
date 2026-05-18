@@ -56,7 +56,19 @@ function Focus-PaneById {
     # Find the pane element by RuntimeId in $Hwnd's window and click the centre
     # of its CURRENT bounding rectangle (handles resize/move). $true on hit.
     param([IntPtr]$Hwnd, [string]$Id)
-    if (-not $script:WV_UIA -or -not $Id -or $Hwnd -eq [IntPtr]::Zero) { return $false }
+    if (-not $Id) { return $false }
+    # Click-point identity: "pt:X,Y" = the exact screen point you clicked when
+    # naming. Robust for split panes (UIA FocusedElement was flaky and fell
+    # back to the shared tab key, silently overwriting). Just click there.
+    if ($Id -like 'pt:*') {
+        $xy = $Id.Substring(3).Split(',')
+        if ($xy.Count -eq 2) {
+            [void][WinVoiceNative]::ClickPoint([int]$xy[0], [int]$xy[1])
+            return $true
+        }
+        return $false
+    }
+    if (-not $script:WV_UIA -or $Hwnd -eq [IntPtr]::Zero) { return $false }
     try {
         $root = [System.Windows.Automation.AutomationElement]::FromHandle($Hwnd)
         if (-not $root) { return $false }
