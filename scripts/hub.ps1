@@ -373,10 +373,15 @@ function Rebuild-Menu {
     $q = $menu.Items.Add('Quit Vox Hub'); $q.add_Click({ $sync.quit = $true })
 }
 
-Write-VoiceLog 'warming hub recognizer...' 'hub'
+Write-VoiceLog 'priming WinRT speech (build, warm, release)...' 'hub'
 Initialize-HubRec -Warm
-$script:lastWarm = Get-Date     # last time the recognizer was actually exercised OK
-$script:lastKeepAlive = Get-Date  # throttles keep-alive attempts (success or not)
+# CRITICAL: dispose it now. A live WinRT recognizer holds the default mic,
+# which STARVES the SAPI wake engine so "hey <name>" is never heard. At idle
+# only the wake engine may hold the mic. The recognizer is rebuilt fresh in
+# the wake handler (pre-capture) and disposed again right after capture, so
+# it exists ONLY during the brief command window.
+try { if ($script:hrec) { $script:hrec.Dispose(); $script:hrec = $null } } catch { }
+$script:lastWarm = Get-Date
 Rebuild-Menu
 [console]::Beep(880, 120); [console]::Beep(1040, 120)
 $ni.ShowBalloonTip(2500, 'Vox Hub', 'Running. Name a CLI with /vox:name <name>.', 'Info')
